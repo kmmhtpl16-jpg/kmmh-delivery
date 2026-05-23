@@ -1208,7 +1208,7 @@ function updateTodaySub(){
 }
 
 function updatePendingBadge(){
-  const n = records.filter(r=>!r.step2Done).length;
+  const n = records.filter(r=>!r.step2Done && r.status!=='cancelled').length;
   const b = document.getElementById('pendingBadge');
   if(n>0){ b.textContent=n; b.style.display='block'; }
   else b.style.display='none';
