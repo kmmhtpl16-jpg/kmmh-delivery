@@ -152,7 +152,7 @@ textarea{min-height:72px;resize:vertical}
 .pin-key:active{background:var(--orange);color:#fff;transform:scale(.95)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<!-- Supabase SDK replaced with direct REST fetch to fix DataCloneError -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 </head>
 <body>
 
@@ -969,7 +969,7 @@ function checkPin(){
 }
 
 const SUPABASE_URL = 'https://hfystbdqjhftrlelmkjm.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_Cz_p8O1rAs2ohPDtnKS_BA_LYUGiw8rE3NzkxNTc3MDUsImV4cCI6MjA5NDczMzcwNX0.cyRCwh0G6ArSevhsKa6kmPnYhLRRJYrxhlH0ED_JJaE';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmeXN0YmRxamhmdHJsZWxta2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTc3MDUsImV4cCI6MjA5NDczMzcwNX0.cyRCwh0G6ArSevhsKa6kmPnYhLRRJYrxhlH0ED_JJaE';
 
 // ==================== STORE ====================
 const KEY = 'kmmh_v4';
@@ -979,53 +979,30 @@ let photosBefore = [], photosAfterNew = [];
 let helpers = new Set(), histFilter = '';
 let db = null; // Supabase client
 
-// ==================== SUPABASE REST HELPER (no SDK, no DataCloneError) ====================
-function sbHeaders(){
-  return {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_KEY,
-    'Authorization': 'Bearer ' + SUPABASE_KEY,
-    'Prefer': 'return=representation'
-  };
-}
-async function sbSelect(table, query){
-  var url = SUPABASE_URL + '/rest/v1/' + table + '?' + (query||'');
-  var res = await fetch(url, { headers: sbHeaders() });
-  if(!res.ok) throw new Error('sbSelect ' + res.status);
-  return res.json();
-}
-async function sbUpsert(table, row){
-  var url = SUPABASE_URL + '/rest/v1/' + table;
-  var res = await fetch(url, {
-    method: 'POST',
-    headers: Object.assign({}, sbHeaders(), {'Prefer': 'resolution=merge-duplicates,return=minimal'}),
-    body: JSON.stringify(row)
-  });
-  if(!res.ok){ var t = await res.text(); throw new Error('sbUpsert ' + res.status + ' ' + t); }
-}
-async function sbDelete(table, id){
-  var url = SUPABASE_URL + '/rest/v1/' + table + '?id=eq.' + id;
-  var res = await fetch(url, { method: 'DELETE', headers: sbHeaders() });
-  if(!res.ok) throw new Error('sbDelete ' + res.status);
-}
+// ==================== SUPABASE SDK HELPERS ====================
+function sbUpsert(table, row){ return db.from(table).upsert(row, {onConflict:'id'}); }
+function sbDelete(table, id){ return db.from(table).delete().eq('id', id); }
 
-// Init Supabase — ตอนนี้แค่เช็ค URL ว่า config แล้ว
+// Init Supabase
 function initSupabase(){
+  if(typeof supabase === 'undefined'){ console.warn('Supabase SDK not loaded'); return; }
   if(SUPABASE_URL === 'YOUR_SUPABASE_URL'){ console.warn('Supabase not configured'); return; }
-  db = true; // flag ว่าพร้อมใช้งาน
-  console.log('Supabase REST ready ✓');
+  try{
+    db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('Supabase connected ✓');
+  }catch(e){ console.error('Supabase init error:', e); }
 }
 
 // Load from Supabase (with localStorage fallback)
 async function load(){
-  // Always load localStorage first for instant UI
   try{ records = JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ records=[]; }
   if(!db){ initSupabase(); }
   if(!db) return;
   try{
-    var data = await sbSelect('deliveries', 'order=created_at.asc');
-    if(Array.isArray(data)){
-      records = data.map(dbToRec);
+    var res = await db.rpc('get_deliveries');
+    if(res.error) throw res.error;
+    if(res.data && Array.isArray(res.data)){
+      records = res.data.map(dbToRec);
       localStorage.setItem(KEY, JSON.stringify(records));
     }
   }catch(e){
@@ -1078,19 +1055,18 @@ async function saveToCloud(rec){
     var row = recToDb(rec);
     var safeRow = Object.assign({}, row);
     if(safeRow.photos_before && Array.isArray(safeRow.photos_before)){
-      safeRow.photos_before = safeRow.photos_before.map(function(p){
-        return (p && p.startsWith('http')) ? p : '[photo]';
-      });
+      safeRow.photos_before = safeRow.photos_before.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
     }
     if(safeRow.photos_after && Array.isArray(safeRow.photos_after)){
-      safeRow.photos_after = safeRow.photos_after.map(function(p){
-        return (p && p.startsWith('http')) ? p : '[photo]';
-      });
+      safeRow.photos_after = safeRow.photos_after.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
     }
-    await sbUpsert('deliveries', safeRow);
+    var res = await db.rpc('upsert_delivery', {rec: safeRow});
+    if(res.error && !res.error.message.includes('DataClone')) throw res.error;
   }catch(e){
-    console.warn('Cloud save failed:', e.message);
-    toast('err','⚠️ บันทึก Cloud ไม่สำเร็จ ข้อมูลอยู่ในเครื่อง');
+    if(!e.message||!e.message.includes('DataClone')){
+      console.warn('Cloud save failed:', e.message);
+      toast('err','⚠️ บันทึก Cloud ไม่สำเร็จ ข้อมูลอยู่ในเครื่อง');
+    }
   }
 }
 
@@ -1098,8 +1074,9 @@ async function saveToCloud(rec){
 async function deleteFromCloud(id){
   if(!db) return;
   try{
-    await sbDelete('deliveries', id);
-  }catch(e){ console.warn('Cloud delete failed:', e.message); }
+    var res = await db.rpc('delete_delivery', {rec_id: id});
+    if(res.error && !res.error.message.includes('DataClone')) throw res.error;
+  }catch(e){ if(!e.message||!e.message.includes('DataClone')) console.warn('Cloud delete failed:', e.message); }
 }
 
 // Convert record → DB row
@@ -1802,17 +1779,14 @@ function saveStep1(){
     gpsArrival:'', photosAfter:[], timeArrival:'', note:'',
     status:'pending'
   };
-  // Upload photos to Storage (async, fallback to base64 if offline)
+  // Push record ทันที (base64 ก่อน) แล้วค่อย update URL เมื่อ upload เสร็จ
+  records.push(rec); save();
+  tgNewBill(rec); // ✅ แจ้งเตือน Telegram ครั้งเดียวเมื่ออัพโหลดสำเร็จ
+  saveToCloud(rec);
   uploadPhotos(photosBefore, 'before_'+rec.id).then(function(urls){
-    rec.photosBefore = urls;
-    records.push(rec); save();
-    saveToCloud(rec);
+    var idx = records.findIndex(function(r){return r.id===rec.id;});
+    if(idx>=0){ records[idx].photosBefore = urls; save(); saveToCloud(records[idx]); }
   });
-  // Push record immediately with base64 (will update when upload done)
-  if(!records.find(function(r){return r.id===rec.id;})){
-    records.push(rec); save();
-    tgNewBill(rec); // ✅ แจ้งเตือน Telegram ครั้งเดียวเมื่ออัพโหลดสำเร็จ
-  }
   localStorage.removeItem(DRAFT_KEY);
   updateTodaySub(); updatePendingBadge(); clearForm();
   showPage('pending');
@@ -1874,9 +1848,7 @@ async function approveBill(id){
   save();
   if(db){
     try{
-      var url2 = SUPABASE_URL+'/rest/v1/deliveries?id=eq.'+id;
-      await fetch(url2,{method:'PATCH',headers:Object.assign({},sbHeaders(),{'Prefer':'return=minimal'}),
-        body:JSON.stringify({status:'active',approved_by:currentRole,approved_at:records[idx].approvedAt})});
+      await db.rpc('update_delivery',{rec_id:id,updates:{status:'active',approved_by:currentRole,approved_at:records[idx].approvedAt}});
     }catch(e){ console.warn('Cloud approve failed:',e.message); }
   }
   // Log it
@@ -1909,7 +1881,7 @@ async function approveAll(){
       records[idx].approvedBy=currentRole;
       records[idx].approvedAt=now;
       if(db){
-        try{ var ua=SUPABASE_URL+'/rest/v1/deliveries?id=eq.'+records[idx].id; await fetch(ua,{method:'PATCH',headers:Object.assign({},sbHeaders(),{'Prefer':'return=minimal'}),body:JSON.stringify({status:'active',approved_by:currentRole,approved_at:now})}); }catch(e){}
+        try{ await db.rpc('update_delivery',{rec_id:records[idx].id,updates:{status:'active',approved_by:currentRole,approved_at:now}}); }catch(e){}
       }
     }
   }
@@ -2064,7 +2036,7 @@ async function restoreBill(id){
   localStorage.setItem('kmmh_restore_logs', JSON.stringify(restoreLogs));
   save();
   if(db){
-    try{ var ur=SUPABASE_URL+'/rest/v1/deliveries?id=eq.'+id; await fetch(ur,{method:'PATCH',headers:Object.assign({},sbHeaders(),{'Prefer':'return=minimal'}),body:JSON.stringify({status:'active'})}); }catch(e){ console.warn('Cloud restore failed:',e.message); }
+    try{ await db.rpc('update_delivery',{rec_id:id,updates:{status:'active'}}); }catch(e){ console.warn('Cloud restore failed:',e.message); }
   }
   renderAdmin(); updatePendingBadge(); updateTodaySub();
   toast('ok','↩️ กู้คืนบิล '+billName+' สำเร็จ');
@@ -2376,9 +2348,7 @@ async function confirmEdit(){
   // Sync to cloud
   if(db){
     try{
-      var ue=SUPABASE_URL+'/rest/v1/deliveries?id=eq.'+_editTarget;
-      await fetch(ue,{method:'PATCH',headers:Object.assign({},sbHeaders(),{'Prefer':'return=minimal'}),
-        body:JSON.stringify({bill:newBill,dest:newDest,note:newNote,date:newDateISO})});
+      await db.rpc('update_delivery',{rec_id:_editTarget,updates:{bill:newBill,dest:newDest,note:newNote,date:newDateISO}});
     }catch(e){ console.warn('Edit cloud sync failed:', e.message); }
   }
 
@@ -2415,9 +2385,7 @@ async function confirmDel(){
   tgCancelBill(records[idx]);
       if(db){
         try{
-          var uc=SUPABASE_URL+'/rest/v1/deliveries?id=eq.'+cancelId;
-          await fetch(uc,{method:'PATCH',headers:Object.assign({},sbHeaders(),{'Prefer':'return=minimal'}),
-            body:JSON.stringify({status:'cancelled',cancelled_by:records[idx].cancelledBy,cancelled_at:records[idx].cancelledAt})});
+          await db.rpc('update_delivery',{rec_id:cancelId,updates:{status:'cancelled',cancelled_by:records[idx].cancelledBy,cancelled_at:records[idx].cancelledAt}});
         }catch(e){ console.warn('Cloud cancel failed:',e.message); }
       }
     }
@@ -2448,9 +2416,10 @@ async function saveToCloudFuel(rec){
       photo_pump: (rec.photoPump&&rec.photoPump.startsWith('http'))?rec.photoPump:'',
       photo_mile: (rec.photoMile&&rec.photoMile.startsWith('http'))?rec.photoMile:''
     };
-    await sbUpsert('fuel_records', row);
+    var res = await db.rpc('upsert_fuel', {rec: row});
+    if(res.error && !res.error.message.includes('DataClone')) throw res.error;
   }catch(e){
-    console.warn('Fuel cloud save failed:', e.message);
+    if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud save failed:', e.message);
   }
 }
 
@@ -2458,9 +2427,10 @@ async function saveToCloudFuel(rec){
 async function loadFuelFromCloud(){
   if(!db) return;
   try{
-    var data = await sbSelect('fuel_records', 'order=date.desc');
-    if(Array.isArray(data) && data.length>0){
-      fuelRecords = data.map(function(row){
+    var res = await db.rpc('get_fuel_records');
+    if(res.error) throw res.error;
+    if(res.data && Array.isArray(res.data) && res.data.length>0){
+      fuelRecords = res.data.map(function(row){
         return {
           id: row.id, date: row.date, car: row.car,
           pricePerL: row.price_per_l, amount: row.amount, liters: row.liters,
@@ -2473,7 +2443,7 @@ async function loadFuelFromCloud(){
       saveFuel2();
     }
   }catch(e){
-    console.warn('Fuel cloud load failed:', e.message);
+    if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud load failed:', e.message);
   }
 }
 loadFuel();
@@ -2739,7 +2709,7 @@ async function deleteFuelRec(id){
   fuelRecords = fuelRecords.filter(function(r){return r.id!==id;});
   saveFuel2(); renderFuelPage();
   if(db){
-    try{ await sbDelete('fuel_records', id); }catch(e){ console.warn('Fuel cloud delete failed:',e.message); }
+    try{ await db.rpc('delete_fuel',{rec_id:id}); }catch(e){ console.warn('Fuel cloud delete failed:',e.message); }
   }
   toast('ok','ลบแล้ว');
 }
@@ -2939,7 +2909,7 @@ async function syncAll(){
   toast('ok','☁️ กำลังซิงค์ '+records.length+' บิล...');
   try{
     var rows = records.map(recToDb);
-    await sbUpsert('deliveries', rows);
+    for(var i=0;i<rows.length;i++){ await db.rpc('upsert_delivery',{rec:rows[i]}); }
     toast('ok','☁️ ซิงค์ '+records.length+' บิลสำเร็จ');
     // Also sync any pending base64 photos
     await syncPendingPhotos();
