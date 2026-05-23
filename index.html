@@ -11,7 +11,7 @@
 <meta name="theme-color" content="#c94f1e">
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
-:root{
+:root{h
   --bg:#f5f4f0;--card:#fff;--card2:#f5f4f0;
   --border:rgba(0,0,0,0.09);--border2:rgba(0,0,0,0.15);
   --text:#18180f;--t2:#6b6a63;--t3:#a09f98;
@@ -756,6 +756,8 @@ textarea{min-height:72px;resize:vertical}
 // SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
 // SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS approved_by text;
 // SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS approved_at timestamptz;
+// SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS cancelled_by text;
+// SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 
 // ==================== PIN CONFIG ====================
 const PIN_ADMIN = '9616';
@@ -2388,7 +2390,7 @@ async function confirmDel(){
       if(db){
         try{
           await db.rpc('update_delivery',{rec_id:cancelId,updates:{status:'cancelled',cancelled_by:records[idx].cancelledBy,cancelled_at:records[idx].cancelledAt}});
-        }catch(e){ console.warn('Cloud cancel failed:',e.message); }
+        }catch(e){ console.warn('Cloud cancel failed:',e.message); toast('err','⚠️ ยกเลิกในเครื่องแล้ว แต่ sync cloud ไม่สำเร็จ'); }
       }
     }
     closeDelModal(); renderHistory(); renderPending(); updateTodaySub(); updatePendingBadge();
