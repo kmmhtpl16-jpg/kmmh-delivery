@@ -344,6 +344,7 @@ textarea{min-height:72px;resize:vertical}
         <button class="seg-btn" onclick="selDeliveryType(this,'receive')">📦 รับสินค้า</button>
         <button class="seg-btn" onclick="selDeliveryType(this,'upk')">🏢 UPK</button>
         <button class="seg-btn" onclick="selDeliveryType(this,'deliver')">🚚 ส่งลูกค้า</button>
+        <button class="seg-btn" onclick="selDeliveryType(this,'warehouse')">🏦 ส่งคลัง</button>
       </div>
       <input type="hidden" id="fDeliveryType">
     </div>
@@ -1164,6 +1165,15 @@ function showPage(p){
   updatePendingBadge();
   populateMonths();
   checkDraftOnLoad();
+  // บังคับเข้า step2 หากมีบิล pending ค้างอยู่
+  (function checkForcedStep2(){
+    var myPending = records.filter(function(r){ return !r.step2Done && r.status!=='cancelled'; });
+    if(myPending.length > 0){
+      var latest = myPending.sort(function(a,b){ return b.id - a.id; })[0];
+      toast('warn','⚠️ มีบิล '+latest.bill+' ที่ยังรอกรอกข้อมูลถึงที่ กรุณากรอกให้ครบ');
+      setTimeout(function(){ openStep2(latest.id); }, 800);
+    }
+  })();
   scheduleDailySummary(); // Telegram daily summary at 17:00
   // Load fuel from cloud
   if(db) loadFuelFromCloud();
@@ -1253,6 +1263,16 @@ function selDeliveryType(btn, type){
       billInput.value = 'UPK'+Date.now().toString().slice(-6);
     }
     destInput.value = destInput.value || 'UPK';
+  } else if(type === 'warehouse'){
+    // ส่งคลังขนส่ง - ไม่คิดค่าเที่ยว สุ่มเลขบิล ไม่ระบุปลายทาง
+    billLabel.textContent = 'เลขที่บิล (สุ่มให้)';
+    billInput.placeholder = 'สุ่มอัตโนมัติ';
+    billInput.style.opacity = '0.5';
+    if(!billInput.value || billInput.value.startsWith('RCV') || billInput.value.startsWith('UPK') || billInput.value.startsWith('WH')){
+      billInput.value = 'WH'+Date.now().toString().slice(-6);
+    }
+    destInput.value = 'คลังขนส่ง';
+    destInput.setAttribute('readonly', 'true');
   } else {
     // ส่งสินค้าให้ลูกค้า - บังคับใส่เลขบิล
     billLabel.textContent = 'เลขที่บิล *';
@@ -1449,7 +1469,7 @@ function calcAll(){
   const extraPP = (crane?10:0)+(labor?5:0);
   const destVal = document.getElementById('fDest').value.toUpperCase();
   const delivTypeCalc = document.getElementById('fDeliveryType').value;
-  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive';
+  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive' || delivTypeCalc === 'warehouse';
   const baseDrv = isUPK ? 0 : 40;
   const baseHlp = isUPK ? 0 : 20;
   const drvTotal = baseDrv+brickPP+extraPP;
@@ -1751,7 +1771,7 @@ function saveStep1(){
   var hlpArr = [...helpers];
   var dest = document.getElementById('fDest').value.trim();
   var delivTypeVal = document.getElementById('fDeliveryType').value;
-  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive';
+  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive' || delivTypeVal === 'warehouse';
   var brickOn = document.getElementById('chipBrick').classList.contains('on');
   var brickQty = brickOn ? (parseInt(document.getElementById('fBrickQty').value)||0) : 0;
   var crane = document.getElementById('chipCrane').classList.contains('on');
@@ -1784,8 +1804,7 @@ function saveStep1(){
   };
   // Push record ทันที (base64 ก่อน) แล้วค่อย update URL เมื่อ upload เสร็จ
   records.push(rec); save();
-  tgNewBill(rec); // ✅ แจ้งเตือน Telegram ครั้งเดียวเมื่ออัพโหลดสำเร็จ
-  saveToCloud(rec);
+  saveToCloud(rec); // Telegram จะส่งหลัง step2 เสร็จครบเท่านั้น
   uploadPhotos(photosBefore, 'before_'+rec.id).then(function(urls){
     var idx = records.findIndex(function(r){return r.id===rec.id;});
     if(idx>=0){ records[idx].photosBefore = urls; save(); saveToCloud(records[idx]); }
@@ -2118,6 +2137,7 @@ function saveStep2(){
   save();
   closeStep2(); renderPending(); updatePendingBadge();
   showSuccess('บันทึกข้อมูลสำเร็จแล้ว', 'บิล '+records[idx].bill+' ส่งสินค้าเรียบร้อยแล้ว 🎉');
+  tgNewBill(records[idx]); // ✅ แจ้งเตือน Telegram เมื่อครบทั้ง 2 step
 }
 
 // ==================== HISTORY ====================
