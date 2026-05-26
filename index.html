@@ -1165,6 +1165,9 @@ function showPage(p){
   updatePendingBadge();
   populateMonths();
   checkDraftOnLoad();
+    // ===== แก้บัค Step 2 เปิดเองตอนโหลด =====
+    document.getElementById('step2Modal').classList.remove('show');
+    document.getElementById('step2Id').value = '';
   // บังคับเข้า step2 หากมีบิล pending ค้างอยู่
   (function checkForcedStep2(){
     var myPending = records.filter(function(r){ return !r.step2Done && r.status!=='cancelled'; });
@@ -2094,6 +2097,7 @@ function renderPending(){
 
 // ==================== STEP 2 MODAL ====================
 function openStep2(id){
+    if(!id) return; // guard: ป้องกัน openStep2 เปิดเองตอนโหลด
   var r = records.find(function(x){return x.id===id;});
   if(!r) return;
   document.getElementById('step2Id').value=id;
