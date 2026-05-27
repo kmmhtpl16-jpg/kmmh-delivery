@@ -2624,9 +2624,13 @@ function saveFuel(){
   if(!pricePerL||!amount){ toast('err','กรุณากรอกราคาและจำนวนเงิน'); return; }
   if(!fuelPhotoPump){ toast('err','กรุณาถ่ายรูปตู้จ่ายน้ำมัน'); return; }
   if(!fuelPhotoMile){ toast('err','กรุณาถ่ายรูปเข็มไมล์'); return; }
-  var dist = 0; // คำนวณจาก cross-fill ใน calcFuelEconomy แล้ว
-  var kmPerL = (dist>0 && liters>0) ? dist/liters : 0;
-  var costPerKm = (dist>0 && amount>0) ? parseFloat((amount/dist).toFixed(2)) : 0;
+  // Cross-fill method: คำนวณระยะทางจากการเติมครั้งก่อนของรถคันเดียวกัน
+  var sameCar = fuelRecords.filter(function(r){ return r.car === car && r.mileAfter > 0; });
+  sameCar.sort(function(a,b){ return b.mileAfter - a.mileAfter; });
+  var prevRec = sameCar.find(function(r){ return r.mileAfter < mileAfter; }) || null;
+  var dist = prevRec ? mileAfter - prevRec.mileAfter : 0;
+  var kmPerL = (dist > 0 && liters > 0) ? dist / liters : 0;
+  var costPerKm = (dist > 0 && amount > 0) ? parseFloat((amount / dist).toFixed(2)) : 0;
   var rec = {
     id:Date.now(), date, car, pricePerL, amount, liters,
     mileAfter, dist, kmPerL, costPerKm, note,
