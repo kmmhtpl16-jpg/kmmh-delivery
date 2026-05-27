@@ -625,17 +625,10 @@ textarea{min-height:72px;resize:vertical}
       <input type="number" id="fuelLiters" placeholder="คำนวณอัตโนมัติ" step="0.01" min="0"
         style="background:var(--green-bg);border-color:#97c459">
     </div>
-    <div class="row2">
-      <div class="fg">
-        <label class="lbl">เลขไมล์ก่อนเติม (กม.)</label>
-        <input type="number" id="fuelMileBefore" placeholder="12500" min="0" inputmode="numeric" pattern="[0-9]*"
-          oninput="calcFuelEconomy()">
-      </div>
-      <div class="fg">
-        <label class="lbl">เลขไมล์หลังเติม (กม.)</label>
-        <input type="number" id="fuelMileAfter" placeholder="12500" min="0" inputmode="numeric" pattern="[0-9]*"
-          oninput="calcFuelEconomy()">
-      </div>
+    <div class="fg">
+      <label class="lbl">เลขไมล์ ณ วันเติม (กม.)</label>
+      <input type="number" id="fuelMileAfter" placeholder="เช่น 148500" min="0" inputmode="numeric" pattern="[0-9]*"
+        oninput="calcFuelEconomy()">
     </div>
     <!-- Auto-calculated economy -->
     <div id="fuelEconomyResult" style="display:none;background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:10px;padding:14px;margin-top:4px">
@@ -2457,7 +2450,7 @@ async function saveToCloudFuel(rec){
     var row = {
       id: rec.id, date: rec.date, car: rec.car,
       price_per_l: rec.pricePerL, amount: rec.amount, liters: rec.liters,
-      mile_before: rec.mileBefore||0, mile_after: rec.mileAfter||0,
+      mile_after: rec.mileAfter||0,
       dist: rec.dist||0, km_per_l: rec.kmPerL||0, cost_per_km: rec.costPerKm||0,
       note: rec.note||'',
       photo_pump: (rec.photoPump&&rec.photoPump.startsWith('http'))?rec.photoPump:'',
@@ -2481,7 +2474,7 @@ async function loadFuelFromCloud(){
         return {
           id: row.id, date: row.date, car: row.car,
           pricePerL: row.price_per_l, amount: row.amount, liters: row.liters,
-          mileBefore: row.mile_before, mileAfter: row.mile_after,
+          mileAfter: row.mile_after,
           dist: row.dist, kmPerL: row.km_per_l,
           note: row.note||'',
           photoPump: row.photo_pump||'', photoMile: row.photo_mile||''
@@ -2624,7 +2617,6 @@ function saveFuel(){
   var pricePerL = parseFloat(document.getElementById('fuelPricePerL').value)||0;
   var amount = parseFloat(document.getElementById('fuelAmount').value)||0;
   var liters = parseFloat(document.getElementById('fuelLiters').value)||0;
-  var mileBefore = parseFloat(document.getElementById('fuelMileBefore').value)||0;
   var mileAfter = parseFloat(document.getElementById('fuelMileAfter').value)||0;
   var note = document.getElementById('fuelNote').value.trim();
   if(!date){ toast('err','กรุณากรอกวันที่'); return; }
@@ -2632,12 +2624,12 @@ function saveFuel(){
   if(!pricePerL||!amount){ toast('err','กรุณากรอกราคาและจำนวนเงิน'); return; }
   if(!fuelPhotoPump){ toast('err','กรุณาถ่ายรูปตู้จ่ายน้ำมัน'); return; }
   if(!fuelPhotoMile){ toast('err','กรุณาถ่ายรูปเข็มไมล์'); return; }
-  var dist = (mileBefore>0 && mileAfter>mileBefore) ? mileAfter-mileBefore : 0;
+  var dist = 0; // คำนวณจาก cross-fill ใน calcFuelEconomy แล้ว
   var kmPerL = (dist>0 && liters>0) ? dist/liters : 0;
   var costPerKm = (dist>0 && amount>0) ? parseFloat((amount/dist).toFixed(2)) : 0;
   var rec = {
     id:Date.now(), date, car, pricePerL, amount, liters,
-    mileBefore, mileAfter, dist, kmPerL, costPerKm, note,
+    mileAfter, dist, kmPerL, costPerKm, note,
     photoPump: fuelPhotoPump,
     photoMile: fuelPhotoMile
   };
@@ -2678,7 +2670,7 @@ function saveFuel(){
 
 function clearFuelForm(){
   ['fuelDate','fuelDateISO','fuelPricePerL','fuelAmount','fuelLiters',
-   'fuelMileBefore','fuelMileAfter','fuelNote'].forEach(function(id){
+   'fuelMileAfter','fuelNote'].forEach(function(id){
     document.getElementById(id).value='';
   });
   document.getElementById('fuelCar').value='';
@@ -2831,8 +2823,7 @@ function showFuelDetail(id){
   if(r.pricePerL) html += frow('ราคา/ลิตร', '฿'+r.pricePerL);
   html += frow('จำนวนเงิน', '฿'+Math.round(r.amount).toLocaleString());
   if(r.liters) html += frow('ปริมาณ', r.liters.toFixed(2)+' ลิตร');
-  if(r.mileBefore) html += frow('เลขไมล์ก่อน', r.mileBefore.toLocaleString()+' กม.');
-  if(r.mileAfter) html += frow('เลขไมล์หลัง', r.mileAfter.toLocaleString()+' กม.');
+  if(r.mileAfter) html += frow('เลขไมล์ ณ วันเติม', r.mileAfter.toLocaleString()+' กม.');
   if(r.dist) html += frow('ระยะทาง', r.dist.toLocaleString()+' กม.');
   if(r.kmPerL && r.kmPerL > 0) html += frow('กม./ลิตร', r.kmPerL.toFixed(2)+' กม./ลิตร');
   if(r.amount && r.dist > 0) html += frow('ต้นทุน/กม.', '฿'+(r.amount/r.dist).toFixed(2)+'/กม.');
