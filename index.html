@@ -1777,15 +1777,15 @@ function saveStep1(){
     document.getElementById('upkWarn').style.display = 'block';
     return;
   }
-  if(photosBefore.length < 2){
-    toast('err','กรุณาถ่ายรูปก่อนออกรถอย่างน้อย 2 รูป (มี '+photosBefore.length+' รูป)');
-    return;
-  }
   // Check pending: ถ้ารถคันเดียวกันยังมีงานค้าง แจ้งเตือน
   var pendingForCar = records.filter(function(r){ return r.car===car && !r.step2Done && r.status!=='cancelled'; });
   if(pendingForCar.length > 0){
     var pBill = pendingForCar.sort(function(a,b){ return b.id - a.id; })[0].bill;
     alert('ข้อมูลซ้ำ กรุณาปิดงานค้างเดิมก่อน (บิล '+pBill+' ยังค้างอยู่)');
+    return;
+  }
+  if(photosBefore.length < 2){
+    toast('err','กรุณาถ่ายรูปก่อนออกรถอย่างน้อย 2 รูป (มี '+photosBefore.length+' รูป)');
     return;
   }
   if(records.find(function(r){return r.bill===bill;})){ toast('err','เลขบิล '+bill+' มีในระบบแล้ว'); return; }
