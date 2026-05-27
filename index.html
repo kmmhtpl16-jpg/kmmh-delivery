@@ -2763,10 +2763,18 @@ function renderFuelPage(){
       +'<div>'
       +'<div style="font-size:13px;font-weight:700">'+sh+' · '+r.date+'</div>'
       +'<div style="font-size:12px;color:var(--t2)">'+r.liters.toFixed(2)+' ลิตร · ฿'+r.pricePerL+'/ล.'+(r.note?' · '+r.note:'')+'</div>'
-      +(r.kmPerL>0?'<div style="font-size:12px;color:var(--blue)">'
-      +'📏 '+r.dist+' กม. · '+r.kmPerL.toFixed(2)+' กม./ลิตร'
-      +(r.amount&&r.dist>0?' · ฿'+(r.amount/r.dist).toFixed(2)+'/กม.':'')
-      +'</div>':'')
+      +(function(){
+        var sameCarH=fuelRecords.filter(function(x){return x.car===r.car&&x.mileAfter>0&&x.id!==r.id;});
+        sameCarH.sort(function(a,b){return b.mileAfter-a.mileAfter;});
+        var prevH=sameCarH.find(function(x){return x.mileAfter<r.mileAfter;})||null;
+        var hDist=prevH?r.mileAfter-prevH.mileAfter:(r.dist||0);
+        var hKmL=(hDist>0&&r.liters>0)?hDist/r.liters:0;
+        if(hKmL<=0) return '';
+        return '<div style="font-size:12px;color:var(--blue)">'
+          +'📏 '+hDist+' กม. · '+hKmL.toFixed(2)+' กม./ลิตร'
+          +(r.amount&&hDist>0?' · ฿'+(r.amount/hDist).toFixed(2)+'/กม.':'')
+          +'</div>';
+      })()
       +'</div>'
       +'<div style="text-align:right">'
       +'<div style="font-size:14px;font-weight:700;color:var(--orange)">฿'+Math.round(r.amount).toLocaleString()+'</div>'
@@ -2828,9 +2836,16 @@ function showFuelDetail(id){
   html += frow('จำนวนเงิน', '฿'+Math.round(r.amount).toLocaleString());
   if(r.liters) html += frow('ปริมาณ', r.liters.toFixed(2)+' ลิตร');
   if(r.mileAfter) html += frow('เลขไมล์ ณ วันเติม', r.mileAfter.toLocaleString()+' กม.');
-  if(r.dist) html += frow('ระยะทาง', r.dist.toLocaleString()+' กม.');
-  if(r.kmPerL && r.kmPerL > 0) html += frow('กม./ลิตร', r.kmPerL.toFixed(2)+' กม./ลิตร');
-  if(r.amount && r.dist > 0) html += frow('ต้นทุน/กม.', '฿'+(r.amount/r.dist).toFixed(2)+'/กม.');
+  // Cross-fill real-time: คำนวณ dist/kmPerL/costPerKm จาก fuelRecords
+  var sameCarD = fuelRecords.filter(function(x){ return x.car === r.car && x.mileAfter > 0 && x.id !== r.id; });
+  sameCarD.sort(function(a,b){ return b.mileAfter - a.mileAfter; });
+  var prevD = sameCarD.find(function(x){ return x.mileAfter < r.mileAfter; }) || null;
+  var rtDist = prevD ? r.mileAfter - prevD.mileAfter : (r.dist || 0);
+  var rtKmPerL = (rtDist > 0 && r.liters > 0) ? rtDist / r.liters : 0;
+  var rtCostPerKm = (rtDist > 0 && r.amount > 0) ? r.amount / rtDist : 0;
+  if(rtDist > 0) html += frow('ระยะทาง', rtDist.toLocaleString()+' กม.');
+  if(rtKmPerL > 0) html += frow('กม./ลิตร', rtKmPerL.toFixed(2)+' กม./ลิตร');
+  if(rtCostPerKm > 0) html += frow('ต้นทุน/กม.', '฿'+rtCostPerKm.toFixed(2)+'/กม.');
   if(r.note) html += '<div style="background:var(--card2);border-radius:8px;padding:10px;color:var(--t2);font-size:13px;margin:8px 0">📝 '+r.note+'</div>';
   var thumbs = '';
   if(r.photoPump) thumbs += '<div><div style="font-size:11px;color:var(--t2);margin-bottom:4px">ตู้น้ำมัน</div><img src="'+r.photoPump+'" onclick="openLbox(this.src)" style="width:100%;max-width:160px;height:120px;object-fit:cover;border-radius:8px;cursor:pointer;display:block"></div>';
