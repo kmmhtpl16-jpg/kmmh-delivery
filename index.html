@@ -258,6 +258,25 @@ textarea{min-height:72px;resize:vertical}
   </div>
 </div>
 
+<!-- FUEL DUPLICATE MODAL -->
+<div class="modal-bg" id="fuelDupModal" onclick="if(event.target===this)closeFuelDupModal()">
+<div class="modal-sheet">
+<div class="modal-handle"></div>
+<div class="modal-title">⚠️ พบรายการเติมน้ำมันที่คล้ายกัน</div>
+<p style="font-size:14px;color:var(--t2);margin-bottom:6px" id="fuelDupMsg"></p>
+<p style="font-size:13px;color:var(--t2);margin-bottom:20px;line-height:1.6">มีรายการนี้อยู่แล้ว ต้องการบันทึกซ้ำหรือไม่?</p>
+<div style="display:flex;gap:10px">
+<button class="btn btn-secondary" onclick="closeFuelDupModal()">ยกเลิก</button>
+<button class="btn btn-primary" onclick="confirmSaveFuel()">บันทึกต่อ</button>
+</div>
+</div>
+</div>
+
+<!-- FUEL DETAIL MODAL -->
+<div class="modal-bg" id="fuelDetailModal" onclick="if(event.target===this)closeFuelDetailModal()">
+<div class="modal-sheet" id="fuelDetailContent"></div>
+</div>
+
 <!-- DETAIL MODAL -->
 <div class="modal-bg" id="detailModal" onclick="if(event.target===this)closeDetail()">
   <div class="modal-sheet" id="detailContent"></div>
@@ -1178,8 +1197,8 @@ function showPage(p){
     }
   })();
   scheduleDailySummary(); // Telegram daily summary at 17:00
-  // Load fuel from cloud
-  if(db) loadFuelFromCloud();
+  loadFuel();          // โหลดจาก localStorage ก่อน
+  if(db) loadFuelFromCloud();  // แล้วค่อย sync cloud
   // Show sync status
   if(db){
     var n = records.length;
@@ -2458,7 +2477,7 @@ async function loadFuelFromCloud(){
     var res = await db.rpc('get_fuel_records');
     if(res.error) throw res.error;
     if(res.data && Array.isArray(res.data) && res.data.length>0){
-      fuelRecords = res.data.map(function(row){
+      var cloudRecords = res.data.map(function(row){
         return {
           id: row.id, date: row.date, car: row.car,
           pricePerL: row.price_per_l, amount: row.amount, liters: row.liters,
@@ -2468,7 +2487,14 @@ async function loadFuelFromCloud(){
           photoPump: row.photo_pump||'', photoMile: row.photo_mile||''
         };
       });
+      // merge: ไม่ทับของเดิม ใช้ id เป็น key
+      var existingIds = new Set(fuelRecords.map(function(r){ return r.id; }));
+      cloudRecords.forEach(function(r){
+        if(!existingIds.has(r.id)) fuelRecords.push(r);
+      });
+      fuelRecords.sort(function(a,b){ return b.id - a.id; });
       saveFuel2();
+      renderFuelPage();
     }
   }catch(e){
     if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud load failed:', e.message);
@@ -2606,6 +2632,19 @@ function saveFuel(){
     photoPump: fuelPhotoPump,
     photoMile: fuelPhotoMile
   };
+  // Duplicate check: ตรวจ car + date + amount ตรงกัน
+  var dupRec = fuelRecords.find(function(r){
+    return r.car === car && r.date === date && r.amount === amount;
+  });
+  if(dupRec){
+    // แสดง Modal แจ้งเตือน
+    var dateDisplay = document.getElementById('fuelDate').value;
+    document.getElementById('fuelDupMsg').innerHTML =
+      'รถ <strong>' + car + '</strong> &middot; วันที่ ' + dateDisplay + ' &middot; &#3647;' + amount.toLocaleString();
+    document.getElementById('fuelDupModal').classList.add('show');
+    window._pendingFuelRec = rec;
+    return;
+  }
   fuelRecords.unshift(rec);
   saveFuel2();
   saveToCloudFuel(rec); // sync to Supabase
@@ -2714,7 +2753,7 @@ function renderFuelPage(){
     var thumbs='';
     if(r.photoPump) thumbs+='<img src="'+r.photoPump+'" onclick="openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;margin-right:4px">';
     if(r.photoMile) thumbs+='<img src="'+r.photoMile+'" onclick="openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer">';
-    return '<div style="padding:10px 0;border-bottom:0.5px solid var(--border)">'
+    return '<div style="padding:10px 0;border-bottom:0.5px solid var(--border);cursor:pointer" onclick="showFuelDetail('+r.id+')'+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
       +'<div>'
       +'<div style="font-size:13px;font-weight:700">'+sh+' · '+r.date+'</div>'
@@ -2731,6 +2770,74 @@ function renderFuelPage(){
       +(thumbs?'<div style="margin-top:6px;display:flex">'+thumbs+'</div>':'')
       +'</div>';
   }).join('');
+}
+
+function closeFuelDupModal(){
+  document.getElementById('fuelDupModal').classList.remove('show');
+  window._pendingFuelRec = null;
+}
+
+function confirmSaveFuel(){
+  var rec = window._pendingFuelRec;
+  if(!rec){ closeFuelDupModal(); return; }
+  closeFuelDupModal();
+  fuelRecords.unshift(rec);
+  saveFuel2();
+  saveToCloudFuel(rec);
+  var fuelId = rec.id;
+  if(rec.photoPump && rec.photoPump.startsWith('data:')){
+    uploadPhotoToStorage(rec.photoPump, 'fuel_pump_'+fuelId).then(function(url){
+      var i=fuelRecords.findIndex(function(r){return r.id===fuelId;});
+      if(i>=0 && url){ fuelRecords[i].photoPump=url; saveFuel2(); }
+    });
+  }
+  if(rec.photoMile && rec.photoMile.startsWith('data:')){
+    uploadPhotoToStorage(rec.photoMile, 'fuel_mile_'+fuelId).then(function(url){
+      var i=fuelRecords.findIndex(function(r){return r.id===fuelId;});
+      if(i>=0 && url){ fuelRecords[i].photoMile=url; saveFuel2(); }
+    });
+  }
+  toast('ok','✓ บันทึกการเติมน้ำมันแล้ว');
+  clearFuelForm();
+  renderFuelPage();
+  window._pendingFuelRec = null;
+}
+
+function closeFuelDetailModal(){
+  document.getElementById('fuelDetailModal').classList.remove('show');
+}
+
+function showFuelDetail(id){
+  var r = fuelRecords.find(function(x){ return x.id === id; });
+  if(!r) return;
+  var sh = r.car.includes('ผจ-9245')?'🚗 ผจ-9245':(r.car.includes('ผม-9721')?'🚗 ผม-9721':'🚛 84-5763');
+  function frow(l,v){
+    return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid var(--border)">'  
+      +'<span style="color:var(--t2)">'+l+'</span><strong>'+v+'</strong></div>';
+  }
+  var html = '<div class="modal-handle"></div>';
+  html += '<div class="modal-title">⛽ เติมน้ำมัน — '+sh+'</div>';
+  html += frow('รถ', r.car);
+  html += frow('วันที่', r.date);
+  if(r.pricePerL) html += frow('ราคา/ลิตร', '฿'+r.pricePerL);
+  html += frow('จำนวนเงิน', '฿'+Math.round(r.amount).toLocaleString());
+  if(r.liters) html += frow('ปริมาณ', r.liters.toFixed(2)+' ลิตร');
+  if(r.mileBefore) html += frow('เลขไมล์ก่อน', r.mileBefore.toLocaleString()+' กม.');
+  if(r.mileAfter) html += frow('เลขไมล์หลัง', r.mileAfter.toLocaleString()+' กม.');
+  if(r.dist) html += frow('ระยะทาง', r.dist.toLocaleString()+' กม.');
+  if(r.kmPerL && r.kmPerL > 0) html += frow('กม./ลิตร', r.kmPerL.toFixed(2)+' กม./ลิตร');
+  if(r.amount && r.dist > 0) html += frow('ต้นทุน/กม.', '฿'+(r.amount/r.dist).toFixed(2)+'/กม.');
+  if(r.note) html += '<div style="background:var(--card2);border-radius:8px;padding:10px;color:var(--t2);font-size:13px;margin:8px 0">📝 '+r.note+'</div>';
+  var thumbs = '';
+  if(r.photoPump) thumbs += '<div><div style="font-size:11px;color:var(--t2);margin-bottom:4px">ตู้น้ำมัน</div><img src="'+r.photoPump+'" onclick="openLbox(this.src)" style="width:100%;max-width:160px;height:120px;object-fit:cover;border-radius:8px;cursor:pointer;display:block"></div>';
+  if(r.photoMile) thumbs += '<div><div style="font-size:11px;color:var(--t2);margin-bottom:4px">เข็มไมล์</div><img src="'+r.photoMile+'" onclick="openLbox(this.src)" style="width:100%;max-width:160px;height:120px;object-fit:cover;border-radius:8px;cursor:pointer;display:block"></div>';
+  if(thumbs) html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin:12px 0">'+thumbs+'</div>';
+  if(currentRole==='admin' || currentRole==='owner'){
+    html += '<button class="btn btn-secondary" style="margin-top:8px;color:var(--red)" onclick="closeFuelDetailModal();deleteFuelRec('+r.id+')">🗑 ลบรายการนี้</button>';
+  }
+  html += '<button class="btn btn-secondary" style="margin-top:10px" onclick="closeFuelDetailModal()">ปิด</button>';
+  document.getElementById('fuelDetailContent').innerHTML = html;
+  document.getElementById('fuelDetailModal').classList.add('show');
 }
 
 async function deleteFuelRec(id){
