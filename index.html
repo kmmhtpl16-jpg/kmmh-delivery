@@ -2458,7 +2458,7 @@ async function saveToCloudFuel(rec){
       id: rec.id, date: rec.date, car: rec.car,
       price_per_l: rec.pricePerL, amount: rec.amount, liters: rec.liters,
       mile_before: rec.mileBefore||0, mile_after: rec.mileAfter||0,
-      dist: rec.dist||0, km_per_l: rec.kmPerL||0,
+      dist: rec.dist||0, km_per_l: rec.kmPerL||0, cost_per_km: rec.costPerKm||0,
       note: rec.note||'',
       photo_pump: (rec.photoPump&&rec.photoPump.startsWith('http'))?rec.photoPump:'',
       photo_mile: (rec.photoMile&&rec.photoMile.startsWith('http'))?rec.photoMile:''
@@ -2500,7 +2500,6 @@ async function loadFuelFromCloud(){
     if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud load failed:', e.message);
   }
 }
-loadFuel();
 
 function formatThaiDate2(input){
   var v = input.value.replace(/[^\d/]/g,'');
@@ -2528,33 +2527,43 @@ function calcFuel(){
 }
 
 function calcFuelEconomy(){
-  var mileBefore = parseFloat(document.getElementById('fuelMileBefore').value)||0;
-  var mileAfter = parseFloat(document.getElementById('fuelMileAfter').value)||0;
+  var mileNow = parseFloat(document.getElementById('fuelMileAfter').value)||0;
   var liters = parseFloat(document.getElementById('fuelLiters').value)||0;
-  var pricePerL = parseFloat(document.getElementById('fuelPricePerL').value)||0;
   var amount = parseFloat(document.getElementById('fuelAmount').value)||0;
+  var car = document.getElementById('fuelCar').value;
   var result = document.getElementById('fuelEconomyResult');
 
-  if(mileBefore>0 && mileAfter>mileBefore && liters>0){
-    var dist = mileAfter - mileBefore;
-    var kmPerL = dist/liters;
+  if(!mileNow || !car){ result.style.display='none'; return; }
+
+  // หา record ล่าสุดของรถคันเดียวกัน (cross-fill method)
+  var prevRec = null;
+  if(typeof fuelRecords !== 'undefined'){
+    var sameCar = fuelRecords.filter(function(r){ return r.car === car && r.mileAfter > 0; });
+    if(sameCar.length > 0){
+      sameCar.sort(function(a,b){ return b.mileAfter - a.mileAfter; });
+      prevRec = sameCar.find(function(r){ return r.mileAfter < mileNow; }) || null;
+    }
+  }
+
+  if(prevRec && liters > 0){
+    var dist = mileNow - prevRec.mileAfter;
+    var kmPerL = dist / liters;
+    var costPerKm = (amount > 0 && dist > 0) ? amount / dist : 0;
     document.getElementById('fuelDistVal').textContent = dist.toLocaleString();
     document.getElementById('fuelEconomyVal').textContent = kmPerL.toFixed(2);
-    // Description line
-    var desc = '';
-    if(amount>0 && dist>0){
-      var costPerKm = amount/dist;
-      desc = 'ต้นทุนน้ำมัน '+costPerKm.toFixed(2)+' ฿/กม.';
-    }
-    document.getElementById('fuelEconomyDesc').textContent = desc;
-    result.style.display='block';
-  } else if(mileBefore>0 && mileAfter>0 && mileAfter<=mileBefore){
-    result.style.display='none';
+    document.getElementById('fuelEconomyDesc').textContent =
+      'เทียบกับครั้งที่แล้ว ' + prevRec.mileAfter.toLocaleString() + ' กม.'
+      + (costPerKm > 0 ? '  ·  ต้นทุน ฿' + costPerKm.toFixed(2) + '/กม.' : '');
+    result.style.display = 'block';
+  } else if(mileNow > 0 && liters > 0){
+    document.getElementById('fuelDistVal').textContent = '—';
+    document.getElementById('fuelEconomyVal').textContent = '—';
+    document.getElementById('fuelEconomyDesc').textContent = 'ยังไม่มีข้อมูลเติมครั้งก่อนของรถคันนี้';
+    result.style.display = 'block';
   } else {
-    result.style.display='none';
+    result.style.display = 'none';
   }
 }
-
 var fuelPhotoPump = null; // single photo
 var fuelPhotoMile = null;
 
