@@ -150,6 +150,11 @@ textarea{min-height:72px;resize:vertical}
 /* PIN MODAL */
 .pin-key{padding:16px;border-radius:10px;border:0.5px solid var(--border2);background:var(--card);font-family:'Sarabun',sans-serif;font-size:20px;font-weight:600;cursor:pointer;transition:all .18s;color:var(--text)}
 .pin-key:active{background:var(--orange);color:#fff;transform:scale(.95)}
+/* ===== Trip mode toggle switch (สวิตช์เลื่อน ON/OFF) ===== */
+.trip-switch{position:relative;width:54px;height:30px;border-radius:30px;background:var(--border2);cursor:pointer;transition:background .2s;flex:0 0 auto;-webkit-tap-highlight-color:transparent}
+.trip-switch.on{background:var(--green)}
+.trip-switch-knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s}
+.trip-switch.on .trip-switch-knob{left:27px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -339,7 +344,7 @@ textarea{min-height:72px;resize:vertical}
         <div style="font-size:14px;font-weight:800;color:var(--t2)">🚚 เที่ยวรวมหลายบิล</div>
         <div style="font-size:11.5px;color:var(--t3);margin-top:2px">รถ/คนขับ/ผู้ช่วยชุดเดียว ส่ง 2–3 บิลพร้อมกัน</div>
       </div>
-      <button class="seg-btn" id="tripToggleBtn" onclick="toggleTripMode()" style="flex:0 0 auto;min-width:70px">ปิด</button>
+      <div class="trip-switch" id="tripToggleBtn" onclick="toggleTripMode()" role="switch" aria-checked="false"><span class="trip-switch-knob"></span></div>
     </div>
     <div id="tripSharedHint" style="display:none;margin-top:10px;font-size:11.5px;color:var(--blue);line-height:1.6">ℹ️ วันที่ · รถ · คนขับ · ผู้ช่วย · GPS = ใช้ร่วมทุกบิล (ไม่ต้องกรอกซ้ำ)<br>เลขบิล · ปลายทาง · อิฐ/เครน/แรงงาน · รูป = แยกต่อบิล</div>
     <div id="tripBanner" style="display:none;margin-top:12px;background:var(--orange-bg);border:1px solid #fac775;border-radius:10px;padding:10px 12px">
@@ -1840,7 +1845,7 @@ function toggleTripMode(){
 
 function setTripUI(on){
   var btn = document.getElementById('tripToggleBtn');
-  if(btn){ btn.textContent = on?'เปิด':'ปิด'; btn.classList.toggle('active', on); }
+  if(btn){ btn.classList.toggle('on', on); btn.setAttribute('aria-checked', on?'true':'false'); }
   var banner = document.getElementById('tripBanner');
   if(banner) banner.style.display = on?'block':'none';
   var fin = document.getElementById('finishTripBtn');
