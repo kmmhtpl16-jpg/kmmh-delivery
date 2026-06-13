@@ -702,6 +702,7 @@ textarea{min-height:72px;resize:vertical}
   <!-- FUEL HISTORY -->
   <div class="card">
     <div class="card-title">📋 ประวัติการเติมน้ำมัน</div>
+    <div id="fuelMonthFilter" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;margin-bottom:6px"></div>
     <div id="fuelHistory"><div class="empty" style="padding:16px"><p>ยังไม่มีข้อมูล</p></div></div>
   </div>
 </div>
@@ -784,20 +785,22 @@ const PIN_OWNER = '0402';
 const PIN_ACCOUNTANT = '3750';
 
 // ==================== TELEGRAM CONFIG ====================
-const TG_TOKEN = '8532210539:AAH7ElyYLc4JpvN7nswAU2m5qjCDydNFSu4';
-const TG_CHAT_ID = '-5127977749'; // Group: แจ้งเตือน : งานจัดส่ง
+// 🔒 Bot token ถูกย้ายไปเก็บฝั่ง server แล้ว (Supabase Edge Function: notify-telegram)
+//    หน้าเว็บไม่เก็บ bot token / chat_id อีกต่อไป จึงไม่รั่วผ่าน source code
+//    chat_id และ token จริงอยู่ใน Edge Function เท่านั้น
+const TG_NOTIFY_FN = '/functions/v1/notify-telegram'; // ต่อท้าย SUPABASE_URL
 
 async function sendTelegram(msg){
-  if(!TG_TOKEN || !TG_CHAT_ID) return;
+  if(!msg) return;
   try{
-    await fetch('https://api.telegram.org/bot'+TG_TOKEN+'/sendMessage',{
+    await fetch(SUPABASE_URL + TG_NOTIFY_FN, {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        chat_id: TG_CHAT_ID,
-        text: msg,
-        parse_mode: 'HTML'
-      })
+      headers:{
+        'Content-Type':'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY
+      },
+      body: JSON.stringify({ text: msg, parse_mode: 'HTML' })
     });
   }catch(e){ console.warn('Telegram failed:',e.message); }
 }
@@ -999,6 +1002,17 @@ const DRAFT_KEY = 'kmmh_draft_v4';
 let records = [], delTarget = null;
 let photosBefore = [], photosAfterNew = [];
 let helpers = new Set(), histFilter = '';
+// --- History pagination (โหลดทีละ 10 บิล) ---
+var HIST_PAGE = 10;            // จำนวนเริ่มต้น = 10 รายการ (1 บิล = 1 รายการ)
+var histShown = HIST_PAGE;     // ตอนนี้แสดงกี่บิล
+// ตรวจสภาพเน็ตของเครื่องนั้น ๆ: เน็ตช้า/เปิดโหมดประหยัด = true
+function isSlowNet(){
+  var n = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if(!n) return false;
+  return !!n.saveData || /(^|[^4])([23]g|slow-2g)/.test(n.effectiveType||'');
+}
+// โหลดเพิ่ม: เน็ตช้าเพิ่มทีละ 10, เน็ตเร็วเพิ่มทีละ 20
+function histStep(){ return isSlowNet() ? 10 : 20; }
 let db = null; // Supabase client
 // ==================== TRIP MODE (เที่ยวรวมหลายบิล) ====================
 var tripMode = false;        // true = กำลังคีย์เที่ยวรวม
@@ -1020,58 +1034,81 @@ function initSupabase(){
 }
 
 // Load from Supabase (with localStorage fallback)
+// โหลดแบบ cache-first: โชว์ข้อมูลในเครื่องทันที แล้วค่อย refresh จาก cloud เบื้องหลัง (ไม่ block การเปิดแอป)
 async function load(){
   try{ records = JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ records=[]; }
+  refreshFromCloud();   // ยิงเบื้องหลัง ไม่ await
+}
+
+var _pendingFresh = null;   // ข้อมูลใหม่ที่รอ apply ตอนผู้ใช้ว่าง
+
+// ดึงข้อมูลล่าสุดจาก cloud เบื้องหลัง
+async function refreshFromCloud(){
   if(!db){ initSupabase(); }
   if(!db) return;
+  showUpdating(true);
   try{
     var res = await db.rpc('get_deliveries');
     if(res.error) throw res.error;
     if(res.data && Array.isArray(res.data)){
-      records = res.data.map(dbToRec);
-      localStorage.setItem(KEY, JSON.stringify(records));
+      var fresh = res.data.map(dbToRec);
+      var freshJSON = JSON.stringify(fresh);
+      localStorage.setItem(KEY, freshJSON);                 // เก็บลง cache เสมอ
+      if(freshJSON !== JSON.stringify(records)){             // mitigation 2: อัปเดตเฉพาะตอนเปลี่ยนจริง
+        if(isUserBusy()) _pendingFresh = fresh;             // mitigation 3: ผู้ใช้ไม่ว่าง → พักไว้ก่อน
+        else applyFresh(fresh);
+      }
     }
   }catch(e){
-    console.warn('Supabase load failed, using local:', e.message);
+    console.warn('refresh failed, using local:', e.message);
+  }finally{
+    showUpdating(false);
   }
 }
 
-// Upload photo to Supabase Storage (REST, no SDK)
-async function uploadPhoto(base64DataUrl, fileName){
-  if(!db) return base64DataUrl;
-  try{
-    var parts = base64DataUrl.split(',');
-    var mime = parts[0].match(/:(.*?);/)[1];
-    var binary = atob(parts[1]);
-    var arr = new Uint8Array(binary.length);
-    for(var i=0;i<binary.length;i++) arr[i] = binary.charCodeAt(i);
-    var blob = new Blob([arr], {type: mime});
-    var uploadUrl = SUPABASE_URL+'/storage/v1/object/delivery-photos/'+fileName;
-    var res = await fetch(uploadUrl, {
-      method:'POST',
-      headers:{ 'apikey': SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY,
-                'Content-Type': mime, 'x-upsert':'true' },
-      body: blob
-    });
-    if(!res.ok) throw new Error('upload '+res.status);
-    return SUPABASE_URL+'/storage/v1/object/public/delivery-photos/'+fileName;
-  }catch(e){
-    console.warn('Photo upload failed:', e.message);
-    return base64DataUrl;
-  }
+// นำข้อมูลใหม่มาใช้ + วาดหน้าที่เปิดอยู่ใหม่
+function applyFresh(fresh){
+  records = fresh;
+  _pendingFresh = null;
+  rerenderActive();
 }
 
-// Upload array of photos, return array of URLs
-async function uploadPhotos(photos, prefix){
-  var urls = [];
-  for(var i=0;i<photos.length;i++){
-    var p = photos[i];
-    if(p.startsWith('http')){ urls.push(p); continue; } // already URL
-    var fileName = prefix + '_' + Date.now() + '_' + i + '.jpg';
-    var url = await uploadPhoto(p, fileName);
-    urls.push(url);
+// ถ้ามีข้อมูลใหม่ค้างอยู่และผู้ใช้ว่างแล้ว → apply
+function flushPendingFresh(){
+  if(_pendingFresh && !isUserBusy()) applyFresh(_pendingFresh);
+}
+
+// วาดหน้าที่กำลังเปิดอยู่ใหม่ (ไม่รีเซ็ตตำแหน่ง pagination)
+function rerenderActive(){
+  updatePendingBadge();
+  var pg = document.querySelector('.page.active');
+  var id = pg ? pg.id : '';
+  if(id==='page-history') renderHistory();
+  else if(id==='page-pending') renderPending();
+  else if(id==='page-admin' && currentRole!=='driver') renderAdmin();
+  else if(id==='page-report'){ populateMonths(); renderReport(); }
+}
+
+// ผู้ใช้ "ไม่ว่าง" = กำลังคีย์บิล (หน้า add) หรือมี popup เปิดอยู่
+function isUserBusy(){
+  var add = document.getElementById('page-add');
+  if(add && add.classList.contains('active')) return true;
+  return !!document.querySelector('.modal-bg.show');
+}
+
+// ป้าย "กำลังอัปเดต" กลางบนจอ (mitigation 1)
+function showUpdating(on){
+  var el = document.getElementById('_updatingPill');
+  if(!el){
+    el = document.createElement('div');
+    el.id = '_updatingPill';
+    el.textContent = '🔄 กำลังอัปเดต…';
+    el.style.cssText = 'position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);'
+      + 'background:rgba(0,0,0,.78);color:#fff;font-size:12px;font-weight:600;padding:6px 14px;border-radius:999px;'
+      + 'z-index:500;opacity:0;transition:opacity .25s;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.25)';
+    document.body.appendChild(el);
   }
-  return urls;
+  el.style.opacity = on ? '1' : '0';
 }
 
 // Save single record to Supabase
@@ -1159,8 +1196,9 @@ function showPage(p){
   document.querySelectorAll('.bnav-btn').forEach(x=>x.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
   document.getElementById('bnav-'+p).classList.add('active');
+  flushPendingFresh();   // ออกจากฟอร์ม/สลับหน้าแล้ว ถ้ามีข้อมูลใหม่ค้างไว้ apply ก่อนวาด
   if(p==='pending') renderPending();
-  if(p==='history') renderHistory();
+  if(p==='history'){ histShown=HIST_PAGE; renderHistory(); }
   if(p==='report'){ populateMonths(); renderReport(); }
   if(p==='fuel') renderFuelPage();
   if(p==='admin'){
@@ -1195,7 +1233,7 @@ function showPage(p){
   // Show sync status
   if(db){
     var n = records.length;
-    if(n > 0) toast('ok','☁️ โหลดข้อมูล '+n+' บิลจาก Cloud');
+    if(n > 0) toast('ok','📂 พร้อมใช้งาน '+n+' บิล (กำลังอัปเดตล่าสุด…)');
   }
 })();
 
@@ -2221,6 +2259,7 @@ function openStep2(id){
 function closeStep2(){
   document.getElementById('step2Modal').classList.remove('show');
   photosAfterNew=[];
+  flushPendingFresh();
 }
 function saveStep2(){
   var id = parseInt(document.getElementById('step2Id').value);
@@ -2275,8 +2314,11 @@ function renderHistory(){
     list.innerHTML='<div class="empty"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><p>ยังไม่มีข้อมูล</p></div>';
     return;
   }
+  // แสดงทีละหน้า: เอาแค่ histShown บิลแรก (ที่เหลือกด "โหลดเพิ่ม")
+  if(histShown > f.length) histShown = f.length;
+  var shown = f.slice(0, histShown);
   var html='';
-  f.forEach(function(r){
+  shown.forEach(function(r){
     var carBadge=r.car.includes('6 ล้อ')?'b-green':'b-blue';
     var carShort=r.car.includes('ผจ-9245')?'กระบะ ผจ-9245':(r.car.includes('ผม-9721')?'กระบะ ผม-9721':(r.car.includes('6 ล้อ')?'6 ล้อ 84-5763':'รถ'));
     var typeLabel=r.deliveryType==='receive'?'📦 รับสินค้า':(r.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า');
@@ -2297,9 +2339,21 @@ function renderHistory(){
       +'<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
       +'</div></div>';
   });
+  // ปุ่มโหลดเพิ่ม ถ้ายังมีบิลที่ยังไม่แสดง
+  var remain = f.length - shown.length;
+  if(remain > 0){
+    var add = Math.min(histStep(), remain);
+    html += '<div onclick="showMoreHist()" style="text-align:center;padding:14px;margin-top:8px;'
+      + 'background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:12px;'
+      + 'cursor:pointer;font-weight:700;color:var(--brand,#2563eb)">'
+      + '⬇️ โหลดเพิ่มอีก '+add+' บิล <span style="color:var(--sub,#888);font-weight:500">(เหลือ '+remain+')</span></div>';
+  }
   list.innerHTML=html;
 }
-function setHF(m){ histFilter=m; renderHistory(); }
+// โหลดเพิ่ม: ขยายจำนวนที่แสดงแล้ว render ใหม่
+function showMoreHist(){ histShown += histStep(); renderHistory(); }
+// เปลี่ยนเดือน/ฟิลเตอร์ → กลับไปเริ่มที่ 10 บิลแรกเสมอ
+function setHF(m){ histFilter=m; histShown=HIST_PAGE; renderHistory(); }
 
 // ==================== DETAIL (NO NESTED BACKTICKS - FIX #1) ====================
 function showDetail(id){
@@ -2311,7 +2365,7 @@ function showDetail(id){
   window._viewPhotos = allPh;
   var ph = '';
   for(var i=0;i<allPh.length;i++){
-    ph += '<img src="'+allPh[i]+'" onclick="openViewPhoto('+i+')" style="width:76px;height:76px;object-fit:cover;border-radius:8px;cursor:pointer;flex-shrink:0">';
+    ph += '<img src="'+allPh[i]+'" loading="lazy" decoding="async" onclick="openViewPhoto('+i+')" style="width:76px;height:76px;object-fit:cover;border-radius:8px;cursor:pointer;flex-shrink:0">';
   }
 
   // Build rows using string concat (no backticks)
@@ -2379,7 +2433,7 @@ function showDetail(id){
   document.getElementById('detailModal').classList.add('show');
 }
 function openViewPhoto(i){ if(window._viewPhotos&&window._viewPhotos.length) openLboxArr(window._viewPhotos, i); }
-function closeDetail(){ document.getElementById('detailModal').classList.remove('show'); }
+function closeDetail(){ document.getElementById('detailModal').classList.remove('show'); flushPendingFresh(); }
 
 // ==================== SUCCESS MODAL ====================
 function showSuccess(title, msg){
@@ -2422,6 +2476,7 @@ function openEditModal(id){
 function closeEditModal(){
   document.getElementById('editModal').classList.remove('show');
   _editTarget = null;
+  flushPendingFresh();
 }
 
 async function confirmEdit(){
@@ -2499,7 +2554,7 @@ function promptDel(id){
   document.getElementById('delBillName').textContent = r ? r.bill : '—';
   document.getElementById('delModal').classList.add('show');
 }
-function closeDelModal(){ document.getElementById('delModal').classList.remove('show'); delTarget=null; }
+function closeDelModal(){ document.getElementById('delModal').classList.remove('show'); delTarget=null; flushPendingFresh(); }
 async function confirmDel(){
   if(delTarget!=null){
     var cancelId = delTarget;
@@ -2540,7 +2595,7 @@ function saveFuel2(){ localStorage.setItem(FUEL_KEY, JSON.stringify(fuelRecords)
 
 // Sync fuel record to Supabase
 async function saveToCloudFuel(rec){
-  if(!db) return;
+  if(!db) return false;
   try{
     var row = {
       id: rec.id, date: rec.date, car: rec.car,
@@ -2553,8 +2608,10 @@ async function saveToCloudFuel(rec){
     };
     var res = await db.rpc('upsert_fuel', {rec: row});
     if(res.error && !res.error.message.includes('DataClone')) throw res.error;
+    return true;
   }catch(e){
     if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud save failed:', e.message);
+    return false;
   }
 }
 
@@ -2564,8 +2621,8 @@ async function loadFuelFromCloud(){
   try{
     var res = await db.rpc('get_fuel_records');
     if(res.error) throw res.error;
-    if(res.data && Array.isArray(res.data) && res.data.length>0){
-      fuelRecords = res.data.map(function(row){
+    if(res.data && Array.isArray(res.data)){
+      var cloud = res.data.map(function(row){
         return {
           id: row.id, date: row.date, car: row.car,
           pricePerL: row.price_per_l, amount: row.amount, liters: row.liters,
@@ -2575,7 +2632,16 @@ async function loadFuelFromCloud(){
           photoPump: row.photo_pump||'', photoMile: row.photo_mile||''
         };
       });
+      var cloudIds=new Set(cloud.map(function(r){return r.id;}));
+      var localOnly=(fuelRecords||[]).filter(function(r){return r && !cloudIds.has(r.id);});
+      fuelRecords=cloud.concat(localOnly).sort(function(a,b){return (b.date||'').localeCompare(a.date||'')||(b.id-a.id);});
       saveFuel2();
+      if(localOnly.length){
+        localOnly.forEach(function(r){ saveToCloudFuel(r); });
+        toast('ok','☁️ ซิงค์รายการน้ำมันที่ค้าง '+localOnly.length+' รายการขึ้น Cloud');
+      }
+      var _pf=document.getElementById('page-fuel');
+      if(_pf && _pf.classList.contains('active')) renderFuelPage();
     }
   }catch(e){
     if(!e.message||!e.message.includes('DataClone')) console.warn('Fuel cloud load failed:', e.message);
@@ -2715,7 +2781,9 @@ function saveFuel(){
   };
   fuelRecords.unshift(rec);
   saveFuel2();
-  saveToCloudFuel(rec); // sync to Supabase
+  saveToCloudFuel(rec).then(function(okCloud){ // sync to Supabase
+    if(okCloud===false) toast('err','⚠️ ยังไม่ได้บันทึกขึ้น Cloud (เก็บในเครื่องแล้ว) จะลองซิงค์ใหม่ตอนเปิดแอป');
+  });
   // Upload fuel photos to storage
   var fuelId = rec.id;
   if(fuelPhotoPump && fuelPhotoPump.startsWith('data:')){
@@ -2760,13 +2828,63 @@ function clearFuelForm(){
   document.getElementById('fuelDateISO').value=d.toISOString().slice(0,10);
 }
 
+function fuelThaiDate(iso){
+  if(!iso) return '-';
+  var p=String(iso).split('-'); if(p.length!==3) return iso;
+  var moN=['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  return parseInt(p[2])+' '+moN[parseInt(p[1])]+' '+(parseInt(p[0])+543);
+}
+var fuelHistFilter='';
+function setFuelHF(m){ fuelHistFilter=m; renderFuelPage(); }
+function showFuelDetail(id){
+  var r=(fuelRecords||[]).find(function(x){return x.id===id;});
+  if(!r) return;
+  var m=document.getElementById('fuelDetailModal');
+  if(!m){
+    m=document.createElement('div'); m.id='fuelDetailModal'; m.className='modal-bg';
+    m.onclick=function(e){ if(e.target===m) m.classList.remove('show'); };
+    document.body.appendChild(m);
+  }
+  function L(l,v){ return '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid var(--border)"><span style="color:var(--t2)">'+l+'</span><span style="font-weight:600;text-align:right">'+v+'</span></div>'; }
+  var ph='';
+  if(r.photoPump) ph+='<img src="'+r.photoPump+'" onclick="openLbox(this.src)" style="width:48%;border-radius:8px;cursor:pointer">';
+  if(r.photoMile) ph+='<img src="'+r.photoMile+'" onclick="openLbox(this.src)" style="width:48%;border-radius:8px;cursor:pointer;margin-left:4%">';
+  m.innerHTML='<div class="modal-sheet"><div class="modal-handle"></div>'
+    +'<div class="modal-title">⛽ รายละเอียดการเติมน้ำมัน</div>'
+    +L('วันที่', fuelThaiDate(r.date))
+    +L('รถ', r.car)
+    +L('จำนวนเงิน', '฿'+Math.round(r.amount).toLocaleString())
+    +L('ราคา/ลิตร', '฿'+r.pricePerL)
+    +L('ปริมาณ', (r.liters||0).toFixed(2)+' ลิตร')
+    +(r.mileBefore?L('เลขไมล์ก่อน', Number(r.mileBefore).toLocaleString()):'')
+    +(r.mileAfter?L('เลขไมล์หลัง', Number(r.mileAfter).toLocaleString()):'')
+    +(r.dist>0?L('ระยะทาง', r.dist+' กม.'):'')
+    +(r.kmPerL>0?L('อัตราสิ้นเปลือง', r.kmPerL.toFixed(2)+' กม./ลิตร'):'')
+    +(r.dist>0&&r.amount?L('ต้นทุน/กม.', '฿'+(r.amount/r.dist).toFixed(2)):'')
+    +(r.note?L('หมายเหตุ', r.note):'')
+    +(ph?'<div style="display:flex;margin-top:12px">'+ph+'</div>':'')
+    +'<button onclick="document.getElementById(\'fuelDetailModal\').classList.remove(\'show\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:10px;background:var(--card2);font-weight:700;cursor:pointer">ปิด</button>'
+    +'</div>';
+  m.classList.add('show');
+}
 function renderFuelPage(){
   // Set today date if empty
   if(!document.getElementById('fuelDate').value) clearFuelForm();
 
+  // --- ตัวกรองเดือน + เลือกข้อมูลตามเดือน ---
+  var _fm=[...new Set((fuelRecords||[]).map(function(r){return (r.date||'').slice(0,7);}).filter(Boolean))].sort().reverse();
+  var _moN=['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  var _fbar=document.getElementById('fuelMonthFilter');
+  if(_fbar){
+    var _fh='<div class="f-chip '+(!fuelHistFilter?'on':'')+'" onclick="setFuelHF(\'\')">ทั้งหมด</div>';
+    _fm.forEach(function(mm){ var pp=mm.split('-'); _fh+='<div class="f-chip '+(fuelHistFilter===mm?'on':'')+'" onclick="setFuelHF(\''+mm+'\')">'+_moN[parseInt(pp[1])]+' '+(parseInt(pp[0])+543)+'</div>'; });
+    _fbar.innerHTML=_fh;
+  }
+  var view=(fuelRecords||[]).filter(function(r){ return !fuelHistFilter || (r.date||'').startsWith(fuelHistFilter); });
+
   // Summary by car
   var carMap={};
-  fuelRecords.forEach(function(r){
+  view.forEach(function(r){
     if(!carMap[r.car]) carMap[r.car]={total:0,liters:0,trips:0,kmPerLArr:[]};
     carMap[r.car].total+=r.amount;
     carMap[r.car].liters+=r.liters;
@@ -2812,19 +2930,19 @@ function renderFuelPage(){
 
   // Fuel history
   var histEl = document.getElementById('fuelHistory');
-  if(!fuelRecords.length){
-    histEl.innerHTML='<div class="empty" style="padding:16px"><p>ยังไม่มีข้อมูล</p></div>';
+  if(!view.length){
+    histEl.innerHTML='<div class="empty" style="padding:16px"><p>'+(fuelHistFilter?'ไม่มีข้อมูลในเดือนที่เลือก':'ยังไม่มีข้อมูล')+'</p></div>';
     return;
   }
-  histEl.innerHTML=fuelRecords.map(function(r){
+  histEl.innerHTML=view.map(function(r){
     var sh=r.car.includes('ผจ-9245')?'ผจ-9245':(r.car.includes('ผม-9721')?'ผม-9721':'84-5763');
     var thumbs='';
-    if(r.photoPump) thumbs+='<img src="'+r.photoPump+'" onclick="openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;margin-right:4px">';
-    if(r.photoMile) thumbs+='<img src="'+r.photoMile+'" onclick="openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer">';
-    return '<div style="padding:10px 0;border-bottom:0.5px solid var(--border)">'
+    if(r.photoPump) thumbs+='<img src="'+r.photoPump+'" loading="lazy" decoding="async" onclick="event.stopPropagation();openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;margin-right:4px">';
+    if(r.photoMile) thumbs+='<img src="'+r.photoMile+'" loading="lazy" decoding="async" onclick="event.stopPropagation();openLbox(this.src)" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer">';
+    return '<div onclick="showFuelDetail('+r.id+')" style="padding:10px 0;border-bottom:0.5px solid var(--border);cursor:pointer">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
       +'<div>'
-      +'<div style="font-size:13px;font-weight:700">'+sh+' · '+r.date+'</div>'
+      +'<div style="font-size:13px;font-weight:700">'+sh+' · '+fuelThaiDate(r.date)+'</div>'
       +'<div style="font-size:12px;color:var(--t2)">'+r.liters.toFixed(2)+' ลิตร · ฿'+r.pricePerL+'/ล.'+(r.note?' · '+r.note:'')+'</div>'
       +(r.kmPerL>0?'<div style="font-size:12px;color:var(--blue)">'
       +'📏 '+r.dist+' กม. · '+r.kmPerL.toFixed(2)+' กม./ลิตร'
@@ -2833,9 +2951,10 @@ function renderFuelPage(){
       +'</div>'
       +'<div style="text-align:right">'
       +'<div style="font-size:14px;font-weight:700;color:var(--orange)">฿'+Math.round(r.amount).toLocaleString()+'</div>'
-      +'<button onclick="deleteFuelRec('+r.id+')" style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;margin-top:4px">ลบ</button>'
+      +'<button onclick="event.stopPropagation();deleteFuelRec('+r.id+')" style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;margin-top:4px">ลบ</button>'
       +'</div></div>'
       +(thumbs?'<div style="margin-top:6px;display:flex">'+thumbs+'</div>':'')
+      +'<div style="font-size:11px;color:var(--t3);margin-top:4px">แตะดูรายละเอียด ›</div>'
       +'</div>';
   }).join('');
 }
@@ -3173,7 +3292,7 @@ function exportCSV(){
   var h=['วันที่','เลขบิล','รถ','คนขับ','ผู้ช่วย','ปลายทาง','ค่าเที่ยวรวม','คนขับได้','ผู้ช่วยได้','อิฐ(ก้อน)','โบนัสอิฐ','เครน','แรงงาน','เวลาออก','เวลาถึง','GPS ออก','GPS ถึง','ระยะทางคาดการณ์ (กม.)','หมายเหตุ','สถานะ'];
   var rows=activeRecords.map(function(r){return [r.date,r.bill,r.car,r.driver,(r.helpers||[]).join('+'),r.dest||'',(r.tripTotal||0).toFixed(0),(r.driverTotal||0).toFixed(0),(r.helperTotal||0).toFixed(0),r.brickQty||0,(r.brickTotal||0).toFixed(2),r.crane?'ใช่':'',r.labor?'ใช่':'',r.timeOut||'',r.timeArrival||'',r.gpsOut||'',r.gpsArrival||'',(function(){var d=calcDistance(r.gpsOut,r.gpsArrival);return d>0?d.toFixed(1):'';})(),r.note||'',r.step2Done?'ส่งครบ':'รอส่งรูป'];});
   var csv=[h,...rows].map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
-  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
   a.download='KMMH_'+new Date().toISOString().slice(0,10)+'.csv';a.click();toast('ok','ดาวน์โหลด CSV แล้ว');
 }
 function exportJSON(){
@@ -3191,7 +3310,6 @@ function doImport(input){
       var n=i.filter(function(r){return !ex.has(r.id);});
       records=records.concat(n).sort(function(a,b){return a.date.localeCompare(b.date);});
       save();populateMonths();updatePendingBadge();
-      // Sync imported records to cloud
       if(db && n.length>0){
         Promise.all(n.map(function(r){return saveToCloud(r);}))
           .then(function(){toast('ok','นำเข้า '+n.length+' รายการ + บันทึก Cloud สำเร็จ');})
