@@ -609,6 +609,15 @@ textarea{min-height:72px;resize:vertical}
         </select>
       </div>
     </div>
+    <div class="fg">
+      <label class="lbl">คนขับ *</label>
+      <div class="seg" id="fuelDriverSeg">
+        <button class="seg-btn" type="button" onclick="selFuelDriver(this,'จ๋า')">จ๋า</button>
+        <button class="seg-btn" type="button" onclick="selFuelDriver(this,'แซ้งค์')">แซ้งค์</button>
+        <button class="seg-btn" type="button" onclick="selFuelDriver(this,'ต้อม')">ต้อม</button>
+      </div>
+      <input type="hidden" id="fuelDriver">
+    </div>
     <div class="row2">
       <div class="fg">
         <label class="lbl">ราคาต่อลิตร (฿)</label>
@@ -2592,8 +2601,9 @@ async function saveToCloudFuel(rec){
   if(!db) return false;
   try{
     var row = {
-      id: rec.id, date: rec.date, car: rec.car,
+      id: rec.id, date: rec.date, car: rec.car, driver: rec.driver||'',
       price_per_l: rec.pricePerL, amount: rec.amount, liters: rec.liters,
+      cost_per_km: rec.costPerKm||0,
       mile_before: rec.mileBefore||0, mile_after: rec.mileAfter||0,
       dist: rec.dist||0, km_per_l: rec.kmPerL||0,
       note: rec.note||'',
@@ -2618,7 +2628,7 @@ async function loadFuelFromCloud(){
     if(res.data && Array.isArray(res.data)){
       var cloud = res.data.map(function(row){
         return {
-          id: row.id, date: row.date, car: row.car,
+          id: row.id, date: row.date, car: row.car, driver: row.driver||'',
           pricePerL: row.price_per_l, amount: row.amount, liters: row.liters,
           mileBefore: row.mile_before, mileAfter: row.mile_after,
           dist: row.dist, kmPerL: row.km_per_l,
@@ -2745,9 +2755,34 @@ function removeFuelPhoto(gridId, uploadId){
   g.innerHTML = '<div class="photo-add-btn" data-upload="'+uploadId+'" onclick="triggerUpload(this)">'+camSVG+'<span>ถ่ายรูป</span></div>';
 }
 
+function selFuelDriver(btn,val){
+  document.querySelectorAll('#fuelDriverSeg .seg-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  document.getElementById('fuelDriver').value=val;
+}
+
+// แจ้งเตือน Telegram เมื่อบันทึกการเติมน้ำมัน
+function tgFuel(rec){
+  var carShort = rec.car.indexOf('ผจ-9245')>=0?'ผจ-9245':rec.car.indexOf('ผม-9721')>=0?'ผม-9721':'84-5763';
+  var carIcon = rec.car.indexOf('84-5763')>=0?'🚛':'🚗';
+  var NL='\n';
+  var msg = '⛽ บันทึกการเติมน้ำมัน' +NL
+    +'📅 '+(rec.date||'-')+NL
+    +carIcon+' '+carShort+NL
+    +'👤 '+(rec.driver||'-')+NL
+    +'💰 จำนวนเงิน ฿'+Math.round(rec.amount||0).toLocaleString()
+      +(rec.pricePerL?' ('+rec.pricePerL+' ฿/ลิตร)':'')+NL
+    +'⛽ ปริมาณ '+(rec.liters?Number(rec.liters).toFixed(2):'-')+' ลิตร'+NL
+    +'🔢 เลขไมล์ '+(rec.mileAfter?Number(rec.mileAfter).toLocaleString():'-')+' กม.'
+    +(rec.kmPerL>0?NL+'📊 อัตราสิ้นเปลือง '+Number(rec.kmPerL).toFixed(2)+' กม./ลิตร (วิ่ง '+Number(rec.dist).toLocaleString()+' กม.)':'')
+    +(rec.note?NL+'📝 '+rec.note:'');
+  sendTelegram(msg);
+}
+
 function saveFuel(){
   var date = document.getElementById('fuelDateISO').value;
   var car = document.getElementById('fuelCar').value;
+  var driver = document.getElementById('fuelDriver').value;
   var pricePerL = parseFloat(document.getElementById('fuelPricePerL').value)||0;
   var amount = parseFloat(document.getElementById('fuelAmount').value)||0;
   var liters = parseFloat(document.getElementById('fuelLiters').value)||0;
@@ -2755,6 +2790,7 @@ function saveFuel(){
   var note = document.getElementById('fuelNote').value.trim();
   if(!date){ toast('err','กรุณากรอกวันที่'); return; }
   if(!car){ toast('err','กรุณาเลือกรถ'); return; }
+  if(!driver){ toast('err','กรุณาเลือกคนขับ'); return; }
   if(!pricePerL||!amount){ toast('err','กรุณากรอกราคาและจำนวนเงิน'); return; }
   if(!fuelPhotoPump){ toast('err','กรุณาถ่ายรูปตู้จ่ายน้ำมัน'); return; }
   if(!fuelPhotoMile){ toast('err','กรุณาถ่ายรูปเข็มไมล์'); return; }
@@ -2765,7 +2801,7 @@ function saveFuel(){
   var kmPerL = (dist>0 && liters>0) ? dist/liters : 0;
   var costPerKm = (dist>0 && amount>0) ? parseFloat((amount/dist).toFixed(2)) : 0;
   var rec = {
-    id:Date.now(), date, car, pricePerL, amount, liters,
+    id:Date.now(), date, car, driver, pricePerL, amount, liters,
     mileBefore, mileAfter, dist, kmPerL, costPerKm, note,
     photoPump: fuelPhotoPump,
     photoMile: fuelPhotoMile
@@ -2789,6 +2825,7 @@ function saveFuel(){
       if(i>=0 && url){ fuelRecords[i].photoMile=url; saveFuel2(); }
     });
   }
+  try{ tgFuel(rec); }catch(e){ console.warn('tgFuel failed:',e.message); }
   toast('ok','✓ บันทึกการเติมน้ำมันแล้ว');
   clearFuelForm();
   renderFuelPage();
@@ -2800,6 +2837,8 @@ function clearFuelForm(){
     document.getElementById(id).value='';
   });
   document.getElementById('fuelCar').value='';
+  document.getElementById('fuelDriver').value='';
+  document.querySelectorAll('#fuelDriverSeg .seg-btn').forEach(function(b){b.classList.remove('active');});
   document.getElementById('fuelEconomyResult').style.display='none';
   // Reset photos
   fuelPhotoPump=null; fuelPhotoMile=null;
