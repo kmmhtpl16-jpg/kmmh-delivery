@@ -2836,6 +2836,16 @@ function fuelThaiDate(iso){
 }
 var fuelHistFilter='';
 function setFuelHF(m){ fuelHistFilter=m; renderFuelPage(); }
+function askDeleteFuel(id){
+  if(currentRole==='owner'||currentRole==='admin'){
+    if(confirm('ยืนยันลบรายการน้ำมันนี้?')){ deleteFuelRec(id); var m=document.getElementById('fuelDetailModal'); if(m) m.classList.remove('show'); }
+    return;
+  }
+  showPinModal('admin', function(role){
+    deleteFuelRec(id);
+    var m2=document.getElementById('fuelDetailModal'); if(m2) m2.classList.remove('show');
+  });
+}
 function showFuelDetail(id){
   var r=(fuelRecords||[]).find(function(x){return x.id===id;});
   if(!r) return;
@@ -2863,6 +2873,7 @@ function showFuelDetail(id){
     +(r.dist>0&&r.amount?L('ต้นทุน/กม.', '฿'+(r.amount/r.dist).toFixed(2)):'')
     +(r.note?L('หมายเหตุ', r.note):'')
     +(ph?'<div style="display:flex;margin-top:12px">'+ph+'</div>':'')
+    +'<button onclick="askDeleteFuel('+r.id+')" style="width:100%;margin-top:10px;padding:12px;border:none;border-radius:10px;background:var(--red-bg,#fde8e8);color:var(--red,#dc2626);font-weight:700;cursor:pointer">🔒 ลบรายการ (ต้องใช้รหัสแอดมิน)</button>'
     +'<button onclick="document.getElementById(\'fuelDetailModal\').classList.remove(\'show\')" style="width:100%;margin-top:16px;padding:13px;border:none;border-radius:10px;background:var(--card2);font-weight:700;cursor:pointer">ปิด</button>'
     +'</div>';
   m.classList.add('show');
@@ -2951,7 +2962,6 @@ function renderFuelPage(){
       +'</div>'
       +'<div style="text-align:right">'
       +'<div style="font-size:14px;font-weight:700;color:var(--orange)">฿'+Math.round(r.amount).toLocaleString()+'</div>'
-      +'<button onclick="event.stopPropagation();deleteFuelRec('+r.id+')" style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;margin-top:4px">ลบ</button>'
       +'</div></div>'
       +(thumbs?'<div style="margin-top:6px;display:flex">'+thumbs+'</div>':'')
       +'<div style="font-size:11px;color:var(--t3);margin-top:4px">แตะดูรายละเอียด ›</div>'
