@@ -811,7 +811,7 @@ async function sendTelegram(msg){
 // ป้องกันส่งบิลซ้ำ — เก็บ bill ID ที่ส่งแล้ว
 var _sentBillIds = new Set(JSON.parse(localStorage.getItem('_sentBillIds')||'[]'));
 
-// แจ้งเตือนเมื่ออัพโหลดงานจัดส่งใหม่สำเร็จ (ส่งครั้งเดียวต่อบิล)
+// แจ้งเตือนเมื่อรถออกส่งสินค้า (ส่งครั้งเดียวต่อบิล)
 function tgNewBill(rec){
   if(_sentBillIds.has(rec.bill)) return; // เคยส่งแล้ว ไม่ส่งซ้ำ
   _sentBillIds.add(rec.bill);
@@ -820,7 +820,7 @@ function tgNewBill(rec){
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า';
   var team = rec.driver + (rec.helpers&&rec.helpers.length?' + '+rec.helpers.join(', '):'');
   var NL = '\n';
-  var msg = '✅ อัพโหลดงานจัดส่งใหม่สำเร็จ' +NL
+  var msg = '🚚 รถออกส่งสินค้าแล้ว' +NL
     +'📋 '+rec.bill+NL
     +'📅 '+rec.date+' ออก '+rec.timeOut+NL
     +typeLabel+' 🚗 '+(rec.car.includes('ผจ-9245')?'ผจ-9245':rec.car.includes('ผม-9721')?'ผม-9721':'84-5763')+NL
@@ -914,6 +914,58 @@ function sendDailySummary(){
     +(pending.length>0?'⚠️ ยังมีบิลค้างอนุมัติ':'✓ อนุมัติครบแล้ว');
   sendTelegram(msg);
 }
+
+// ==================== MONTHLY SUMMARY (สรุปสิ้นเดือน) ====================
+function _ymOf(d){ if(!d) return ''; d=String(d); if(d.charAt(4)==='-') return d.slice(0,7);
+  var m=d.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m){ return (parseInt(m[3],10)-543)+'-'+('0'+m[2]).slice(-2); } return ''; }
+function sendMonthlySummary(ym){
+  var now=new Date();
+  var Y = ym? parseInt(ym.slice(0,4),10) : now.getFullYear();
+  var M = ym? parseInt(ym.slice(5,7),10) : (now.getMonth()+1);
+  var key = Y + '-' + ('0'+M).slice(-2);
+  var thM=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+  var label = thM[M] + ' ' + (Y+543);
+  var allRecs = (typeof records!=='undefined'&&records)?records:[];
+  var recs = allRecs.filter(function(r){ return _ymOf(r.date)===key; });
+  var active = recs.filter(function(r){ return (r.status||'active')==='active'; });
+  var pending = recs.filter(function(r){ return r.status==='pending'; });
+  var cancelled = recs.filter(function(r){ return r.status==='cancelled'; });
+  var cReceive=active.filter(function(r){return r.deliveryType==='receive';}).length;
+  var cUpk=active.filter(function(r){return r.deliveryType==='upk';}).length;
+  var cDeliver=active.length-cReceive-cUpk;
+  var tripSum=active.reduce(function(s,r){return s+(+r.tripTotal||0);},0);
+  var byPerson={};
+  function _ens(n){ if(!byPerson[n]) byPerson[n]={drive:0,help:0,pay:0}; return byPerson[n]; }
+  active.forEach(function(r){ var o=_ens(r.driver||'-'); o.drive++; o.pay+=(+r.driverTotal||0); (r.helpers||[]).forEach(function(h){ var p=_ens(h); p.help++; p.pay+=20; }); });
+  var allFuel=(typeof fuelRecords!=='undefined'&&fuelRecords)?fuelRecords:[];
+  var fuel=allFuel.filter(function(f){ return _ymOf(f.date)===key; });
+  var fuelBaht=fuel.reduce(function(s,f){return s+(+f.amount||0);},0);
+  var fuelL=fuel.reduce(function(s,f){return s+(+f.liters||0);},0);
+  var NL='\n'; var SEP='─────────────────';
+  var msg='🗓️ สรุปกิจกรรมประจำเดือน'+NL+'📅 '+label+NL+SEP+NL;
+  msg+='📦 งานทั้งหมด: '+recs.length+' บิล'+NL;
+  msg+='   ✅ สำเร็จ '+active.length+' · ⏳ ค้าง '+pending.length+' · ❌ ยกเลิก '+cancelled.length+NL;
+  msg+='🚚 ส่งลูกค้า '+cDeliver+' · 📦 รับสินค้า '+cReceive+' · 🏢 UPK '+cUpk+NL+SEP+NL;
+  msg+='💰 ค่าเที่ยว/ค่าแรงรวม: ฿'+Math.round(tripSum).toLocaleString()+NL;
+  var names=Object.keys(byPerson).sort(function(a,b){return byPerson[b].pay-byPerson[a].pay;});
+  if(names.length){ msg+='👤 ค่าแรงรายคน:'+NL; names.forEach(function(nm){ var o=byPerson[nm]; var parts=[]; if(o.drive)parts.push('ขับ '+o.drive); if(o.help)parts.push('ผู้ช่วย '+o.help); msg+='   • '+nm+' — '+parts.join(', ')+' · ฿'+Math.round(o.pay).toLocaleString()+NL; }); }
+  msg+=SEP+NL;
+  msg+='⛽ น้ำมัน: '+fuel.length+' ครั้ง · '+(Math.round(fuelL*10)/10).toLocaleString()+' ลิตร · ฿'+Math.round(fuelBaht).toLocaleString()+NL;
+  msg+=SEP+NL;
+  msg+='🧮 รวมค่าใช้จ่าย (ค่าแรง+น้ำมัน): ฿'+Math.round(tripSum+fuelBaht).toLocaleString();
+  sendTelegram(msg);
+  return msg;
+}
+var _monthlySchedStarted=false;
+function scheduleMonthlySummary(){
+  if(_monthlySchedStarted) return; _monthlySchedStarted=true;
+  function nextRun(){ var n=new Date(); var d=new Date(n.getFullYear(), n.getMonth()+1, 0, 18,0,0,0); if(d<=n){ d=new Date(n.getFullYear(), n.getMonth()+2, 0, 18,0,0,0);} return d; }
+  function arm(){ var ms=nextRun()-new Date(); setTimeout(function(){ try{ sendMonthlySummary(); }catch(e){ console.warn('monthly fail',e); } arm(); }, ms); }
+  arm();
+}
+try{ scheduleMonthlySummary(); }catch(e){}
+window.addEventListener('load', function(){ try{ scheduleMonthlySummary(); }catch(e){} });
+
 // roles: 'driver' (default), 'admin', 'owner'
 var currentRole = 'driver';
 var pinModalRole = 'admin';
