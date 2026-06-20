@@ -2647,6 +2647,19 @@ function loadFuel(){
   try{ fuelRecords = JSON.parse(localStorage.getItem(FUEL_KEY)||'[]'); }catch(e){ fuelRecords=[]; }
 }
 function saveFuel2(){ localStorage.setItem(FUEL_KEY, JSON.stringify(fuelRecords)); }
+function dedupeFuel(){
+  var seen={}, out=[], changed=false;
+  (fuelRecords||[]).forEach(function(r){
+    var k=(r.car||'')+'|'+(r.date||'')+'|'+(r.liters||0)+'|'+(r.amount||0);
+    if(seen[k]===undefined){ seen[k]=out.length; out.push(r); }
+    else { changed=true; var i=seen[k];
+      var sc=function(x){ return (((x.note||'').length)*10)+(x.photoPump?2:0)+(x.photoMile?2:0)+((x.mileBefore>0)?1:0); };
+      if(sc(r)>sc(out[i])) out[i]=r;
+    }
+  });
+  if(changed){ fuelRecords=out; saveFuel2(); }
+  return changed;
+}
 
 // Sync fuel record to Supabase
 async function saveToCloudFuel(rec){
@@ -2978,6 +2991,7 @@ function computeFuelEco(){
   return eco;
 }
 function renderFuelPage(){
+  dedupeFuel();
   // Set today date if empty
   if(!document.getElementById('fuelDate').value) clearFuelForm();
 
