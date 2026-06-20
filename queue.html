@@ -85,7 +85,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.2 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.3 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -348,17 +348,17 @@ function dispatchTrip(){
   if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return;
   var trip='trip-'+Date.now();
   sel.forEach(function(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; });
-  tripMode=false; save(); renderQueue();
+  sendTelegram('🚚 <b>ออกส่งเที่ยวรวม</b> ('+sel.length+' บิล)\n'+sel.map(function(b){return '• '+b.bill+(b.customer?(' — '+b.customer):'');}).join('\n'),QUEUE_CHAT); tripMode=false; save(); renderQueue();
 }
 function dispatchGroup(ids){
   var sel=ids.filter(function(id){ var c=document.getElementById('chk_'+id); return c&&c.checked; });
   if(!sel.length){ alert('ยังไม่ได้เลือกบิล (ติ๊กอย่างน้อย 1 บิล)'); return; }
   if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return;
   var trip='trip-'+Date.now();
-  sel.forEach(function(id){ var b=find(id); if(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; } });
+  sel.forEach(function(id){ var b=find(id); if(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; } }); sendTelegram('🚚 <b>ออกส่งเที่ยวรวม</b> ('+sel.length+' บิล)\n'+sel.map(function(id){var b=find(id);return b?('• '+b.bill+(b.customer?(' — '+b.customer):'')):'';}).join('\n'),QUEUE_CHAT);
   save(); renderQueue();
 }
-function startDelivery(id){ var b=find(id); if(!b) return; b.status='delivering'; b.assignedAt=Date.now(); save(); renderQueue(); }
+function startDelivery(id){ var b=find(id); if(!b) return; b.status='delivering'; b.assignedAt=Date.now(); sendTelegram('🚚 <b>ออกส่งสินค้า</b>\n🧾 บิล: '+b.bill+(b.customer?('\n👤 '+b.customer):'')+'\n📍 '+b.lat.toFixed(5)+', '+b.lng.toFixed(5),QUEUE_CHAT); save(); renderQueue(); }
 function askDeliveryLocation(id){
   _pickTarget='deliver:'+id;
   var b=find(id), start=b&&b.lat?[b.lat,b.lng]:[14.0,100.6], z=b&&b.lat?15:6;
@@ -368,7 +368,7 @@ function askDeliveryLocation(id){
 function completeDelivery(id,latlng){
   var b=find(id); if(!b) return;
   b.status='done'; b.deliveredAt=Date.now(); b.drvLat=latlng.lat; b.drvLng=latlng.lng;
-  b.gap=haversine(b.lat,b.lng,latlng.lat,latlng.lng);
+  b.gap=haversine(b.lat,b.lng,latlng.lat,latlng.lng); (function(){var th=state.threshold||2;var g=b.gap;var gtxt=(g<=th)?('✓ ตรงจุด ('+fmtkm(g)+')'):('⚠️ ห่างจุดจอง '+fmtkm(g));sendTelegram('✅ <b>ส่งสำเร็จ</b>\n🧾 บิล: '+b.bill+(b.customer?('\n👤 '+b.customer):'')+'\n'+gtxt,QUEUE_CHAT);})();
   save(); renderQueue();
 }
 var _cancelId=null;
