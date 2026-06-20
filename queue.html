@@ -88,7 +88,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.9 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.0 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -368,22 +368,8 @@ function updateTripCount(){
   var n=state.bookings.filter(function(b){ if(b.status!=='booked') return false; var c=document.getElementById('chk_'+b.id); return c&&c.checked; }).length;
   el.textContent=n;
 }
-function dispatchTrip(){
-  var sel=state.bookings.filter(function(b){ if(b.status!=='booked') return false; var c=document.getElementById('chk_'+b.id); return c&&c.checked; });
-  if(!sel.length){ alert('ยังไม่ได้ติ๊กเลือกบิล'); return; }
-  if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return;
-  var trip='trip-'+Date.now();
-  sel.forEach(function(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; });
-  sendTelegram('🚚 <b>ออกส่งเที่ยวรวม</b> ('+sel.length+' บิล)\n'+sel.map(function(b){return '• '+b.bill+(b.customer?(' — '+b.customer):'');}).join('\n'),QUEUE_CHAT); tripMode=false; save(); renderQueue();
-}
-function dispatchGroup(ids){
-  var sel=ids.filter(function(id){ var c=document.getElementById('chk_'+id); return c&&c.checked; });
-  if(!sel.length){ alert('ยังไม่ได้เลือกบิล (ติ๊กอย่างน้อย 1 บิล)'); return; }
-  if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return;
-  var trip='trip-'+Date.now();
-  sel.forEach(function(id){ var b=find(id); if(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; } }); sendTelegram('🚚 <b>ออกส่งเที่ยวรวม</b> ('+sel.length+' บิล)\n'+sel.map(function(id){var b=find(id);return b?('• '+b.bill+(b.customer?(' — '+b.customer):'')):'';}).join('\n'),QUEUE_CHAT);
-  save(); renderQueue();
-}
+function dispatchTrip(){ var sel=state.bookings.filter(function(b){ if(b.status!=='booked') return false; var c=document.getElementById('chk_'+b.id); return c&&c.checked; }); if(!sel.length){ alert('ยังไม่ได้ติ๊กเลือกบิล'); return; } if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return; var trip='trip-'+Date.now(); sel.forEach(function(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; }); tripMode=false; save(); try{ localStorage.setItem('kmmh_handoff', JSON.stringify({mode:'trip', ts:Date.now(), bills:sel.map(function(b){return {bill:b.bill,customer:b.customer,phone:b.phone,lat:b.lat,lng:b.lng,type:b.type};})})); }catch(e){} location.href='index.html'; }
+function dispatchGroup(ids){ var sel=ids.filter(function(id){ var c=document.getElementById('chk_'+id); return c&&c.checked; }); if(!sel.length){ alert('ยังไม่ได้เลือกบิล (ติ๊กอย่างน้อย 1 บิล)'); return; } if(!confirm('ออกส่ง '+sel.length+' บิล เป็นเที่ยวเดียวกัน?')) return; var trip='trip-'+Date.now(); var arr=[]; sel.forEach(function(id){ var b=find(id); if(b){ b.status='delivering'; b.assignedAt=Date.now(); b.tripId=trip; arr.push({bill:b.bill,customer:b.customer,phone:b.phone,lat:b.lat,lng:b.lng,type:b.type}); } }); save(); try{ localStorage.setItem('kmmh_handoff', JSON.stringify({mode:'trip', ts:Date.now(), bills:arr})); }catch(e){} location.href='index.html'; }
 function startDelivery(id){ var b=find(id); if(!b) return; b.status='delivering'; b.assignedAt=Date.now(); save(); try{ localStorage.setItem('kmmh_handoff', JSON.stringify({mode:'single', ts:Date.now(), bills:[{bill:b.bill, customer:b.customer, phone:b.phone, lat:b.lat, lng:b.lng, type:b.type}]})); }catch(e){} location.href='index.html'; }
 function askDeliveryLocation(id){
   _pickTarget='deliver:'+id;
