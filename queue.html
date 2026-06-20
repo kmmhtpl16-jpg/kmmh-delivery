@@ -85,7 +85,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.1 · 🔔 Telegram</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.2 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -190,8 +190,9 @@ async function loadCloud(){
   if(!db) return;
   try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); renderQueue(); } }catch(e){ console.warn('load',e); }
 }
-function sendTelegram(text){
-  try{ fetch(SB_URL+'/functions/v1/notify-telegram',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+SB_KEY,'apikey':SB_KEY},body:JSON.stringify({text:text})}).catch(function(e){console.warn('tg',e);}); }catch(e){ console.warn('tg',e); }
+var QUEUE_CHAT='-5142584793';
+function sendTelegram(text,chat_id){
+  try{ fetch(SB_URL+'/functions/v1/notify-telegram',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+SB_KEY,'apikey':SB_KEY},body:JSON.stringify({text:text,chat_id:chat_id||null})}).catch(function(e){console.warn('tg',e);}); }catch(e){ console.warn('tg',e); }
 }
 function haversine(a,b,c,d){
   var R=6371, dLat=(c-a)*Math.PI/180, dLng=(d-b)*Math.PI/180;
@@ -323,7 +324,7 @@ function saveBooking(){
     drvLat:null, drvLng:null, gap:null
   });
   save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var m='\uD83D\uDCCB <b>\u0e08\u0e2d\u0e07\u0e04\u0e34\u0e27\u0e2a\u0e48\u0e07\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32\u0e43\u0e2b\u0e21\u0e48</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+nb.bill; if(nb.customer) m+='\n\uD83D\uDC64 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD '+nb.lat.toFixed(5)+', '+nb.lng.toFixed(5)+' (\u0e17\u0e34\u0e28'+dirOf(nb)+')'; m+='\n\uD83D\uDDFA https://www.google.com/maps?q='+nb.lat+','+nb.lng; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var m='\uD83D\uDCCB <b>\u0e08\u0e2d\u0e07\u0e04\u0e34\u0e27\u0e2a\u0e48\u0e07\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32\u0e43\u0e2b\u0e21\u0e48</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+nb.bill; if(nb.customer) m+='\n\uD83D\uDC64 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD '+nb.lat.toFixed(5)+', '+nb.lng.toFixed(5)+' (\u0e17\u0e34\u0e28'+dirOf(nb)+')'; m+='\n\uD83D\uDDFA https://www.google.com/maps?q='+nb.lat+','+nb.lng; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');
@@ -380,7 +381,7 @@ function applyCancel(kind){
   if(kind==='order'){ b.status='cancel'; b.cancelReason='ลูกค้ายกเลิกออเดอร์'; }
   else if(kind==='postpone'){ b.status='postponed'; var nd=document.getElementById('postponeDate').value; b.newDate=nd||''; b.cancelReason='เลื่อนวันส่ง'+(nd?(' → '+fmtDate(nd)):''); }
   else if(kind==='pickup'){ b.status='cancel'; b.cancelReason='ลูกค้ารับสินค้าเอง (ไม่ต้องส่ง)'; }
-  var icon=(kind==='postpone')?'\uD83D\uDCC5':'\u274C'; var m=icon+' <b>'+(kind==='postpone'?'\u0e40\u0e25\u0e37\u0e48\u0e2d\u0e19\u0e27\u0e31\u0e19\u0e2a\u0e48\u0e07':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e08\u0e2d\u0e07')+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m);
+  var icon=(kind==='postpone')?'\uD83D\uDCC5':'\u274C'; var m=icon+' <b>'+(kind==='postpone'?'\u0e40\u0e25\u0e37\u0e48\u0e2d\u0e19\u0e27\u0e31\u0e19\u0e2a\u0e48\u0e07':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e08\u0e2d\u0e07')+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m,QUEUE_CHAT);
   save(); closeCancel(); renderQueue();
 }
 function restoreBooking(id){ var b=find(id); if(b){ b.status='booked'; b.cancelReason=null; b.newDate=null; save(); renderQueue(); } }
