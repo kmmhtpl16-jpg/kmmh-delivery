@@ -77,6 +77,9 @@
     #queueList .group-h,#queueList .trip-h,#queueList .grpbtn,#queueList .tripbar,#queueList .tripToggle{grid-column:1/-1;margin-left:0;margin-right:0}
     #queueList .grpbtn{margin-bottom:4px}
   }
+  .seg{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+  .seg-btn{flex:1;min-width:92px;padding:9px 8px;border:1px solid var(--line);border-radius:9px;background:#fafafa;font-size:13px;font-weight:600;font-family:inherit;color:var(--t2);cursor:pointer}
+  .seg-btn.active{background:#fff0eb;border-color:var(--orange);color:var(--orange)}
 </style>
 </head>
 <body>
@@ -85,7 +88,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.5 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.6 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -97,6 +100,13 @@
       <label>เลขที่บิล *</label>
       <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off" oninput="checkDupBill()">
       <div id="fBillStatus" class="hint"></div>
+      <label>เป้าหมายของการจัดส่ง *</label>
+      <div class="seg" id="qDeliveryTypeSeg">
+        <button type="button" class="seg-btn active" onclick="selJobType(this,'deliver')">🚚 ส่งลูกค้า</button>
+        <button type="button" class="seg-btn" onclick="selJobType(this,'receive')">📦 รับสินค้า</button>
+        <button type="button" class="seg-btn" onclick="selJobType(this,'upk')">🏢 UPK</button>
+      </div>
+      <input type="hidden" id="qJobType" value="deliver">
       <label>ชื่อลูกค้า</label>
       <input type="text" id="fCustomer" placeholder="ชื่อผู้รับ/ร้าน" autocomplete="off">
       <label>เบอร์ผู้รับสินค้า (ถ้ามี)</label>
@@ -316,6 +326,9 @@ function onAttach(input){
   };
   r.readAsDataURL(f);
 }
+var JOB_TYPES={deliver:'🚚 ส่งลูกค้า',receive:'📦 รับสินค้า',upk:'🏢 UPK'};
+function jobTypeLabel(v){ return JOB_TYPES[v]||''; }
+function selJobType(btn,type){ document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); var h=document.getElementById('qJobType'); if(h) h.value=type; }
 function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; } var dup=state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===v && b.status!=='cancel';}); if(dup){ st.innerHTML='⚠️ เลขบิลนี้มีในระบบแล้ว'; st.style.color='var(--red)'; } else { st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; } }
 async function saveBooking(){
   var bill=document.getElementById('fBill').value.trim().toUpperCase();
@@ -325,7 +338,7 @@ async function saveBooking(){
   if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
   state.threshold=parseFloat(document.getElementById('fThreshold').value)||2;
   state.bookings.unshift({
-    id:Date.now().toString(), bill:bill,
+    id:Date.now().toString(), bill:bill, type:((document.getElementById('qJobType')||{}).value||'deliver'),
     customer:document.getElementById('fCustomer').value.trim(),
     phone:document.getElementById('fPhone').value.trim(),
     note:document.getElementById('fNote').value.trim(),
@@ -334,7 +347,7 @@ async function saveBooking(){
     drvLat:null, drvLng:null, gap:null
   });
   save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var m='\uD83D\uDCCB <b>\u0e08\u0e2d\u0e07\u0e04\u0e34\u0e27\u0e2a\u0e48\u0e07\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32\u0e43\u0e2b\u0e21\u0e48</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+nb.bill; if(nb.customer) m+='\n\uD83D\uDC64 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD '+nb.lat.toFixed(5)+', '+nb.lng.toFixed(5)+' (\u0e17\u0e34\u0e28'+dirOf(nb)+')'; m+='\n\uD83D\uDDFA https://www.google.com/maps?q='+nb.lat+','+nb.lng; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var m='\uD83D\uDCCB <b>\u0e08\u0e2d\u0e07\u0e04\u0e34\u0e27\u0e2a\u0e48\u0e07\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32\u0e43\u0e2b\u0e21\u0e48</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83D\uDC64 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD '+nb.lat.toFixed(5)+', '+nb.lng.toFixed(5)+' (\u0e17\u0e34\u0e28'+dirOf(nb)+')'; m+='\n\uD83D\uDDFA https://www.google.com/maps?q='+nb.lat+','+nb.lng; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');
@@ -342,7 +355,7 @@ async function saveBooking(){
   var ds=document.getElementById('fDestStatus'); ds.textContent='วิธีง่ายสุด: ก๊อปลิงก์ที่ลูกค้าส่งมา วางในช่องนี้ได้เลย'; ds.style.color='var(--t3)';
   document.getElementById('fPhotoPrev').style.display='none';
   document.getElementById('fFileChip').style.display='none';
-  document.getElementById('fPhoto').value='';
+  document.getElementById('fPhoto').value=''; var _qt=document.getElementById('qJobType'); if(_qt) _qt.value='deliver'; document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b,ix){b.classList.toggle('active',ix===0);});
   var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
   alert('บันทึกการจองเรียบร้อย ✓');
   go('Queue');
@@ -458,7 +471,7 @@ function card(b,showChk,together){
   var badge={booked:['b-booked','รอจัดส่ง'],delivering:['b-delivering','กำลังส่ง'],done:['b-done','ส่งสำเร็จ'],cancel:['b-cancel','ยกเลิก'],postponed:['b-post','เลื่อนส่ง']}[b.status];
   var chk=showChk?('<input type="checkbox" id="chk_'+b.id+'"'+(tripMode?'':' checked')+' onclick="event.stopPropagation()" onchange="updateTripCount()" style="width:20px;height:20px;margin-top:2px;flex:none;accent-color:#16a34a">'):'';
   var h='<div class="q"'+(showChk?' style="display:flex;gap:10px;align-items:flex-start"':'')+'>'+chk+'<div style="flex:1"><div onclick="showDetail(\''+b.id+'\')" style="cursor:pointer"><div class="row1"><div>';
-  h+='<div class="bill">'+b.bill+'</div>';
+  h+='<div class="bill">'+b.bill+'</div>'; if(b.type) h+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
   h+='<div class="meta">'+(b.customer||'-')+(b.phone?(' · ☎ '+b.phone):'')+'</div>';
   if(b.note) h+='<div class="meta">📝 '+b.note+'</div>';
   h+='<div class="meta">📍 '+b.lat.toFixed(4)+', '+b.lng.toFixed(4)+'</div>';
@@ -488,7 +501,7 @@ function showDetail(id){
   document.getElementById('detailModal').classList.add('show');
   function gmap(la,ln){ return 'https://www.google.com/maps?q='+la+','+ln; }
   var html='';
-  html+='<div style="font-weight:700;font-size:16px">'+b.bill+'</div>';
+  html+='<div style="font-weight:700;font-size:16px">'+b.bill+'</div>'; if(b.type) html+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
   html+='<div class="meta">'+(b.customer||'-')+(b.phone?(' &middot; &#9742; '+b.phone):'')+'</div>';
   if(b.note) html+='<div class="meta">&#128221; '+b.note+'</div>';
   html+='<div class="meta">&#129517; ทิศ'+dirOf(b)+'</div>';
