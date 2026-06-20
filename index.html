@@ -712,12 +712,12 @@ textarea{min-height:72px;resize:vertical}
 </div>
 
 <!-- ===== PAGE: ADMIN ===== -->
-<div class="page" id="page-admin">
+<div class="page" id="page-admin"><div class="card" id="qbCfgCard" style="margin:12px;padding:14px;border:1px solid rgba(0,0,0,.09);border-top:3px solid #c94f1e;border-radius:14px;background:#fff"><h3 style="margin:0 0 8px;font-size:15px">🗺️ ตั้งค่าระบบจองคิว (จุดร้าน + ระยะเตือน)</h3><label style="display:block;font-size:13px;color:#6b6a63;margin:6px 0 4px">พิกัดร้าน — วางลิงก์ Google Maps หรือ 14.12,100.45</label><input type="text" id="cfgStore" placeholder="วางลิงก์ Google Maps หรือ lat,lng" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit"><label style="display:block;font-size:13px;color:#6b6a63;margin:10px 0 4px">ระยะเตือน ส่งห่างจากที่จอง (กม.)</label><input type="text" id="cfgThreshold" inputmode="decimal" placeholder="2" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit"><button onclick="saveQbConfig()" style="margin-top:10px;width:100%;padding:11px;border:none;border-radius:9px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">💾 บันทึกตั้งค่าจองคิว</button><div id="cfgStatus" style="font-size:12.5px;margin-top:8px;color:#6b6a63"></div></div>
   <div class="ph">
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.3</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.4</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -2187,7 +2187,10 @@ function adminSwitchRole(){
   }
 }
 
-function renderAdmin(){
+function parseCfgCoords(t){ if(!t) return null; var m=String(t).match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/); if(m){ var la=parseFloat(m[1]),ln=parseFloat(m[2]); if(la>=-90&&la<=90&&ln>=-180&&ln<=180) return {lat:la,lng:ln}; } return null; }
+async function loadQbConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:{}; var st=document.getElementById('cfgStore'),th=document.getElementById('cfgThreshold'),s=document.getElementById('cfgStatus'); if(th&&!th.value) th.value=(c.threshold!=null?c.threshold:2); if(st&&c.storeLat!=null&&!st.value) st.value=Number(c.storeLat).toFixed(6)+','+Number(c.storeLng).toFixed(6); if(s) s.innerHTML=(c.storeLat!=null?('จุดร้านปัจจุบัน: '+Number(c.storeLat).toFixed(5)+', '+Number(c.storeLng).toFixed(5)):'ยังไม่ได้ตั้งจุดร้าน'); }catch(e){ console.warn('cfg',e); } }
+async function saveQbConfig(){ if(!db){ alert('ยังไม่เชื่อมฐานข้อมูล'); return; } var stEl=document.getElementById('cfgStore'),thEl=document.getElementById('cfgThreshold'),s=document.getElementById('cfgStatus'); var thv=parseFloat(thEl.value); var data={threshold:(isNaN(thv)?2:thv)}; var stv=(stEl.value||'').trim(); if(stv){ var c=parseCfgCoords(stv); if(!c){ s.innerHTML='⚠️ อ่านพิกัดร้านไม่ได้ — วางลิงก์เต็ม หรือ lat,lng'; s.style.color='#991c1c'; return; } data.storeLat=c.lat; data.storeLng=c.lng; } s.innerHTML='⏳ กำลังบันทึก...'; s.style.color='#6b6a63'; try{ var r=await db.from('qb_config').upsert({id:'main',data:data,updated_at:new Date().toISOString()},{onConflict:'id'}); if(r&&r.error){ s.innerHTML='⚠️ บันทึกไม่สำเร็จ: '+r.error.message; s.style.color='#991c1c'; return; } s.innerHTML='✓ บันทึกแล้ว · ทุกเครื่องเห็นค่าใหม่เมื่อรีเฟรชหน้าจองคิว'; s.style.color='#2d6411'; }catch(e){ s.innerHTML='⚠️ ผิดพลาด: '+e; s.style.color='#991c1c'; } }
+function renderAdmin(){ try{ loadQbConfig(); }catch(e){}
   // Update role badge
   var badge = document.getElementById('adminRoleBadge');
   if(currentRole==='owner') badge.textContent='👑 เจ้าของ — เข้าถึงได้ทุกอย่าง';
