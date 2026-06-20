@@ -85,7 +85,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.4 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.5 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -268,6 +268,13 @@ function setDest(ll,src){
   s.style.color='var(--green)';
   var b=document.getElementById('fDestBtn'); b.classList.add('has'); b.textContent='🗺️ ดู/แก้หมุดบนแผนที่';
 }
+var _resolvingLink=null;
+function resolveShort(t){
+  var s=document.getElementById('fDestStatus');
+  if(_resolvingLink===t) return; _resolvingLink=t;
+  s.innerHTML='⏳ กำลังคลายลิงก์ย่อ...'; s.style.color='var(--t2)';
+  fetch(SB_URL+'/functions/v1/resolve-maps',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+SB_KEY,'apikey':SB_KEY},body:JSON.stringify({url:t})}).then(function(r){return r.json();}).then(function(d){ if(document.getElementById('fDestLink').value!==t) return; if(d&&d.lat!=null&&d.lng!=null){ setDest({lat:d.lat,lng:d.lng},'จากลิงก์ย่อ'); } else { s.innerHTML='⚠️ คลายลิงก์ย่อไม่สำเร็จ — เปิดลิงก์ในแผนที่แล้วก๊อปลิงก์เต็ม หรือปักหมุดเอง'; s.style.color='var(--orange)'; } }).catch(function(){ if(document.getElementById('fDestLink').value!==t) return; s.innerHTML='⚠️ คลายลิงก์ไม่สำเร็จ ลองใหม่ หรือปักหมุดเอง'; s.style.color='var(--orange)'; });
+}
 function parseDestLink(){
   var t=document.getElementById('fDestLink').value;
   var s=document.getElementById('fDestStatus');
@@ -275,7 +282,7 @@ function parseDestLink(){
   var c=extractCoords(t);
   if(c){ setDest(c,'จากลิงก์'); return; }
   pendingDest=null;
-  if(isShortLink(t)){ s.innerHTML='⚠️ เป็นลิงก์แบบย่อ (goo.gl) อ่านพิกัดตรงๆ ไม่ได้ — แตะเปิดลิงก์ให้เด้งไปหน้าแผนที่ แล้วก๊อปลิงก์เต็มมาวางใหม่ หรือปักหมุดเอง'; s.style.color='var(--orange)'; return; }
+  if(isShortLink(t)){ resolveShort(t); return; }
   s.innerHTML='ยังอ่านพิกัดไม่ได้ — วางลิงก์ Google Maps แบบเต็ม หรือพิมพ์เป็น 14.123, 100.456'; s.style.color='var(--orange)';
 }
 function onAttach(input){
