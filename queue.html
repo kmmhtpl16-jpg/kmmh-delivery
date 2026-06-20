@@ -80,7 +80,6 @@
   .seg{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
   .seg-btn{flex:1;min-width:92px;padding:9px 8px;border:1px solid var(--line);border-radius:9px;background:#fafafa;font-size:13px;font-weight:600;font-family:inherit;color:var(--t2);cursor:pointer}
   .seg-btn.active{background:#fff0eb;border-color:var(--orange);color:var(--orange)}
-  .dir{display:none !important}
 </style>
 </head>
 <body>
@@ -89,7 +88,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.8 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.9 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -125,7 +124,7 @@
       <div id="fFileChip" class="filechip" style="display:none"></div>
       <button class="btn btn-primary" onclick="saveBooking()">บันทึกการจอง</button>
     </div>
-    <div class="card">
+    <div class="card" style="display:none">
       <h2>⚙️ ตั้งค่า</h2>
       <label style="display:none">จุดเริ่ม (ที่ตั้งร้าน) — ใช้คำนวณทิศทาง</label>
       <button class="pickbtn" id="fStoreBtn" onclick="pickLocation('store')" style="display:none">🏠 ปักหมุดที่ตั้งร้าน</button>
@@ -199,6 +198,7 @@ function save(){
     if(rows.length) db.from('bookings').upsert(rows,{onConflict:'id'}).then(null,function(e){ console.warn('save',e); });
   }
 }
+async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 async function loadCloud(){
   if(!db) return;
   try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); renderQueue(); } }catch(e){ console.warn('load',e); }
@@ -422,7 +422,7 @@ function clusterBooked(arr, km){
   return out;
 }
 function renderQueue(){
-  state.threshold=parseFloat(document.getElementById('fThreshold').value)||state.threshold||2;
+  state.threshold=state.threshold||2;
   var list=document.getElementById('queueList');
   var bs=state.bookings;
   document.getElementById('stBooked').textContent=bs.filter(function(b){return b.status==='booked';}).length;
@@ -444,7 +444,7 @@ function renderQueue(){
   clusters.forEach(function(g){
     if(g.length>=2){
       var mx=0,i,j; for(i=0;i<g.length;i++) for(j=i+1;j<g.length;j++){ var dd=haversine(g[i].lat,g[i].lng,g[j].lat,g[j].lng); if(dd>mx) mx=dd; }
-      html+='<div class="group-h" style="color:var(--green)">💡 แนะนำส่งด้วยกัน · '+g.length+' บิลใกล้กัน (รัศมี ~'+fmtkm(mx)+')'+'</div>';
+      html+='<div class="group-h" style="color:var(--green)">💡 แนะนำส่งด้วยกัน · '+g.length+' บิลใกล้กัน (รัศมี ~'+fmtkm(mx)+') · ทิศ'+dirOf(g[0])+'</div>';
       var gids='['+g.map(function(b){return "'"+b.id+"'";}).join(',')+']';
       if(!tripMode) html+='<div class="grpbtn" style="margin:0 12px 8px"><button class="btn btn-green btn-sm" style="width:100%" onclick="dispatchGroup('+gids+')">🚚 ออกส่งที่เลือก (เที่ยวเดียวกัน)</button></div>';
       g.forEach(function(b){ html+=card(b,true,true); });
@@ -506,7 +506,7 @@ function showDetail(id){
   html+='<div style="font-weight:700;font-size:16px">'+b.bill+'</div>'; if(b.type) html+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
   html+='<div class="meta">'+(b.customer||'-')+(b.phone?(' &middot; &#9742; '+b.phone):'')+'</div>';
   if(b.note) html+='<div class="meta">&#128221; '+b.note+'</div>';
-  html+='<div class="meta" style="display:none">&#129517; ทิศ'+dirOf(b)+'</div>';
+  html+='<div class="meta">&#129517; ทิศ'+dirOf(b)+'</div>';
   html+='<div style="margin-top:8px;font-size:13px"><b>จุดที่จอง:</b> '+b.lat.toFixed(5)+', '+b.lng.toFixed(5)+' &middot; <a href="'+gmap(b.lat,b.lng)+'" target="_blank" style="color:#2563eb">เปิด Google Maps</a></div>';
   if(b.status==='done'&&b.drvLat!=null){
     html+='<div style="margin-top:4px;font-size:13px"><b>จุดส่งจริง:</b> '+b.drvLat.toFixed(5)+', '+b.drvLng.toFixed(5)+' &middot; <a href="'+gmap(b.drvLat,b.drvLng)+'" target="_blank" style="color:#2563eb">เปิด Google Maps</a></div>';
@@ -566,6 +566,7 @@ function resetAll(){
   initDB();
   renderQueue();
   loadCloud();
+  loadConfig();
 })();
 </script>
 </body>
