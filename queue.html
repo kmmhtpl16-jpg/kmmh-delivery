@@ -81,8 +81,9 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="topbar" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-    <div>
+  <div class="topbar" style="display:flex;align-items:center;gap:10px">
+    <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
+    <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
       <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง</div>
     </div>
@@ -399,7 +400,7 @@ function renderQueue(){
   var pend=bs.filter(function(b){return b.status==='booked';});
   var banner=document.getElementById('pendingBanner');
   if(pend.length){ banner.classList.add('show'); banner.innerHTML='⏳ มีคิวรอจัดส่ง '+pend.length+' บิล'+(stale.length?(' · ค้างเกิน 12 ชม. '+stale.length+' บิล'):''); } else banner.classList.remove('show');
-  if(!bs.length){ list.innerHTML='<div class="empty">ยังไม่มีคิว — ไปหน้า "จองคิว" เพื่อเพิ่ม<br>หรือกด "ใส่ข้อมูลตัวอย่าง"</div>'; return; }
+  if(!bs.length){ list.innerHTML='<div class="empty">ยังไม่มีคิว — กดปุ่ม "+ จองคิว" มุมขวาบนเพื่อเพิ่มบิล</div>'; return; }
   var byNew=function(x,y){ return (y.createdAt||0)-(x.createdAt||0); };
   var html='';
   var booked=bs.filter(function(b){return b.status==='booked';}).sort(byNew);
