@@ -85,7 +85,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.3 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v1.4 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -95,7 +95,8 @@
     <div class="card">
       <h2>📋 จองคิวส่งสินค้า (ฝ่ายขาย)</h2>
       <label>เลขที่บิล *</label>
-      <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off">
+      <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off" oninput="checkDupBill()">
+      <div id="fBillStatus" class="hint"></div>
       <label>ชื่อลูกค้า</label>
       <input type="text" id="fCustomer" placeholder="ชื่อผู้รับ/ร้าน" autocomplete="off">
       <label>เบอร์ผู้รับสินค้า (ถ้ามี)</label>
@@ -308,11 +309,13 @@ function onAttach(input){
   };
   r.readAsDataURL(f);
 }
-function saveBooking(){
-  var bill=document.getElementById('fBill').value.trim();
+function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; } var dup=state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===v && b.status!=='cancel';}); if(dup){ st.innerHTML='⚠️ เลขบิลนี้มีในระบบแล้ว'; st.style.color='var(--red)'; } else { st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; } }
+async function saveBooking(){
+  var bill=document.getElementById('fBill').value.trim().toUpperCase();
   if(!bill){ alert('กรุณากรอกเลขที่บิล'); return; }
   if(!pendingDest){ alert('กรุณาวางลิงก์ Google Maps หรือปักหมุดปลายทาง'); return; }
-  if(state.bookings.some(function(b){return b.bill===bill;})){ alert('เลขบิลนี้จองไว้แล้ว'); return; }
+  if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
+  if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
   state.threshold=parseFloat(document.getElementById('fThreshold').value)||2;
   state.bookings.unshift({
     id:Date.now().toString(), bill:bill,
@@ -333,6 +336,7 @@ function saveBooking(){
   document.getElementById('fPhotoPrev').style.display='none';
   document.getElementById('fFileChip').style.display='none';
   document.getElementById('fPhoto').value='';
+  var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
   alert('บันทึกการจองเรียบร้อย ✓');
   go('Queue');
 }
