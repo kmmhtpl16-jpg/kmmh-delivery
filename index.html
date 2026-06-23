@@ -926,9 +926,11 @@ function scheduleDailySummary(){
     }, next - now);
   }
 
-  schedulePendingAlert();
-  scheduleSummary();
-  scheduleQueueBacklog();
+  // ⛔ ปิด scheduler ฝั่งเว็บ (23 มิ.ย.69) — ย้ายไปยิงจาก server (Supabase cron) แทน
+  //    กันปัญหาส่งซ้ำหลายเครื่อง. ห้องสรุป: daily-summary 16:30 / ห้องหน้างาน: queue-backlog 16:00
+  // schedulePendingAlert();
+  // scheduleSummary();
+  // scheduleQueueBacklog();
 }
 
 // แจ้งงานจองค้างส่ง — นับคิวที่ status='booked' (ยังไม่ออกรถ) จากฐานข้อมูลคิวจอง
