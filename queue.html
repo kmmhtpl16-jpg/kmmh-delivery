@@ -88,7 +88,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.1 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.0 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -97,9 +97,6 @@
     <button class="btn btn-ghost btn-sm" onclick="go('Queue')" style="margin:12px 12px 0">← กลับหน้าคิว / จัดส่ง</button>
     <div class="card">
       <h2>📋 จองคิวส่งสินค้า (ฝ่ายขาย)</h2>
-      <label>เลขที่บิล *</label>
-      <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off" oninput="checkDupBill()">
-      <div id="fBillStatus" class="hint"></div>
       <label>เป้าหมายของการจัดส่ง *</label>
       <div class="seg" id="qDeliveryTypeSeg">
         <button type="button" class="seg-btn active" onclick="selJobType(this,'deliver')">🚚 ส่งลูกค้า</button>
@@ -108,6 +105,9 @@
         <button type="button" class="seg-btn" onclick="selJobType(this,'klang')">🏭 ส่งคลัง</button>
       </div>
       <input type="hidden" id="qJobType" value="deliver">
+      <label id="fBillLabel">เลขที่บิล *</label>
+      <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off" oninput="checkDupBill()">
+      <div id="fBillStatus" class="hint"></div>
       <label>ชื่อลูกค้า</label>
       <input type="text" id="fCustomer" placeholder="ชื่อผู้รับ/ร้าน" autocomplete="off">
       <label>เบอร์ผู้รับสินค้า (ถ้ามี)</label>
@@ -330,17 +330,44 @@ function onAttach(input){
 }
 var JOB_TYPES={deliver:'🚚 ส่งลูกค้า',receive:'📦 รับสินค้า',upk:'🏢 UPK',klang:'🏭 ส่งคลัง'};
 function jobTypeLabel(v){ return JOB_TYPES[v]||''; }
-function selJobType(btn,type){ document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); var h=document.getElementById('qJobType'); if(h) h.value=type; }
+function selJobType(btn,type){ document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); var h=document.getElementById('qJobType'); if(h) h.value=type; updateBillUI(); }
+function billRequired(type){ return type==='deliver'; }
+function updateBillUI(){
+  var t=((document.getElementById('qJobType')||{}).value)||'deliver';
+  var lab=document.getElementById('fBillLabel'), inp=document.getElementById('fBill'), st=document.getElementById('fBillStatus');
+  if(billRequired(t)){
+    if(lab) lab.textContent='เลขที่บิล *';
+    if(inp) inp.placeholder='เช่น KM6906-0963';
+  } else {
+    if(lab) lab.textContent='เลขที่บิล (ไม่บังคับ)';
+    if(inp) inp.placeholder='งานนี้ไม่ต้องใส่เลขบิลก็ได้';
+  }
+  if(st && !(inp&&inp.value.trim())) st.textContent='';
+  checkDupBill();
+}
+function autoRef(type){
+  var pre={receive:'รับสินค้า',upk:'UPK',klang:'ส่งคลัง'}[type]||'งาน';
+  var d=new Date(), dd=('0'+d.getDate()).slice(-2)+('0'+(d.getMonth()+1)).slice(-2);
+  var n=1, ref;
+  do{ ref=pre+'-'+dd+'-'+('00'+n).slice(-3); n++; }
+  while(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===ref.toUpperCase();}));
+  return ref;
+}
 function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; } var dup=state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===v && b.status!=='cancel';}); if(dup){ st.innerHTML='⚠️ เลขบิลนี้มีในระบบแล้ว'; st.style.color='var(--red)'; } else { st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; } }
 async function saveBooking(){
+  var type=((document.getElementById('qJobType')||{}).value)||'deliver';
   var bill=document.getElementById('fBill').value.trim().toUpperCase();
-  if(!bill){ alert('กรุณากรอกเลขที่บิล'); return; }
+  if(billRequired(type) && !bill){ alert('กรุณากรอกเลขที่บิล (งานส่งลูกค้าต้องมีเลขบิล)'); return; }
   if(!pendingDest){ alert('กรุณาวางลิงก์ Google Maps หรือปักหมุดปลายทาง'); return; }
-  if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
-  if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
+  if(bill){
+    if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
+    if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
+  } else {
+    bill=autoRef(type);
+  }
   state.threshold=parseFloat(document.getElementById('fThreshold').value)||2;
   state.bookings.unshift({
-    id:Date.now().toString(), bill:bill, type:((document.getElementById('qJobType')||{}).value||'deliver'),
+    id:Date.now().toString(), bill:bill, type:type,
     customer:document.getElementById('fCustomer').value.trim(),
     phone:document.getElementById('fPhone').value.trim(),
     note:document.getElementById('fNote').value.trim(),
@@ -358,6 +385,7 @@ async function saveBooking(){
   document.getElementById('fPhotoPrev').style.display='none';
   document.getElementById('fFileChip').style.display='none';
   document.getElementById('fPhoto').value=''; var _qt=document.getElementById('qJobType'); if(_qt) _qt.value='deliver'; document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b,ix){b.classList.toggle('active',ix===0);});
+  updateBillUI();
   var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
   alert('บันทึกการจองเรียบร้อย ✓');
   go('Queue');
