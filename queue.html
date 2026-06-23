@@ -346,7 +346,7 @@ function updateBillUI(){
   checkDupBill();
 }
 function autoRef(type){
-  var pre={receive:'รับสินค้า',upk:'UPK',klang:'ส่งคลัง'}[type]||'งาน';
+  var pre={receive:'RCV',upk:'UPK',klang:'KLG'}[type]||'JOB';
   var d=new Date(), dd=('0'+d.getDate()).slice(-2)+('0'+(d.getMonth()+1)).slice(-2);
   var n=1, ref;
   do{ ref=pre+'-'+dd+'-'+('00'+n).slice(-3); n++; }
