@@ -818,6 +818,8 @@ async function sendTelegram(msg,chat_id){
 
 // ป้องกันส่งบิลซ้ำ — เก็บ bill ID ที่ส่งแล้ว
 var _sentBillIds = new Set(JSON.parse(localStorage.getItem('_sentBillIds')||'[]'));
+// ป้องกันแจ้ง "จัดส่งสำเร็จ" ซ้ำ — เก็บ record id ที่ส่งแล้ว
+var _sentDoneIds = new Set(JSON.parse(localStorage.getItem('_sentDoneIds')||'[]'));
 
 // แจ้งเตือนเมื่อรถออกส่งสินค้า (ส่งครั้งเดียวต่อบิล)
 function tgNewBill(rec){
@@ -836,6 +838,41 @@ function tgNewBill(rec){
     +(rec.dest?'📍 '+rec.dest+NL:'')
     +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0);
   sendTelegramDeliv(msg);
+}
+
+// แจ้งเตือนเมื่อจัดส่งสำเร็จ (ส่งครั้งเดียวต่อบิล) + อัปเดตคิวจองเป็น "ส่งสำเร็จ"
+function tgDeliverySuccess(rec){
+  if(!rec) return;
+  var key = String(rec.id);
+  if(_sentDoneIds.has(key)) return; // เคยแจ้งแล้ว ไม่ซ้ำ
+  _sentDoneIds.add(key);
+  localStorage.setItem('_sentDoneIds', JSON.stringify([..._sentDoneIds]));
+  var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':rec.deliveryType==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า';
+  var NL = '\n';
+  var msg = '✅ จัดส่งสำเร็จ' +NL
+    +'📋 '+rec.bill+NL
+    +'📅 '+rec.date+(rec.timeArrival?(' · ถึง '+rec.timeArrival):'')+NL
+    +typeLabel+NL
+    +'👤 '+(rec.driver||'-')+NL
+    +(rec.dest?'📍 '+rec.dest+NL:'')
+    +'🎉 ปิดงานเรียบร้อย';
+  sendTelegramDeliv(msg);
+  markBookingDone(rec.bill);
+}
+// อัปเดตสถานะคิวจอง (bookings) เป็น done เมื่อส่งสำเร็จ — ทั้ง cloud + local
+async function markBookingDone(bill){
+  var k=(bill||'').trim().toUpperCase(); if(!k) return;
+  try{
+    if(typeof db!=='undefined' && db){
+      var r=await db.from('bookings').select('id,data,status');
+      if(r&&r.data){
+        var row=r.data.filter(function(x){ return (((x.data&&x.data.bill)||'').trim().toUpperCase()===k) && x.status!=='cancel'; })[0];
+        if(row){ var d=row.data||{}; d.status='done'; d.deliveredAt=Date.now();
+          await db.from('bookings').update({status:'done', data:d}).eq('id',row.id); }
+      }
+    }
+  }catch(e){ console.warn('markBookingDone cloud',e); }
+  try{ var raw=localStorage.getItem('qb_v1'); if(raw){ var st=JSON.parse(raw); if(st&&st.bookings){ var ch=false; st.bookings.forEach(function(b){ if(((b.bill||'').trim().toUpperCase()===k) && b.status!=='cancel' && b.status!=='done'){ b.status='done'; b.deliveredAt=Date.now(); ch=true; } }); if(ch) localStorage.setItem('qb_v1', JSON.stringify(st)); } } }catch(e){}
 }
 
 // แจ้งเตือนเมื่อยกเลิกบิล
@@ -878,8 +915,43 @@ function scheduleDailySummary(){
     }, next - now);
   }
 
+  // --- 16:00 แจ้งงานจองค้างส่ง (คิวที่ยังไม่ออกรถ) ---
+  function scheduleQueueBacklog(){
+    var now = new Date();
+    var next = new Date(); next.setHours(16,0,0,0);
+    if(next <= now) next.setDate(next.getDate()+1);
+    setTimeout(function(){
+      sendQueueBacklog();
+      setInterval(sendQueueBacklog, 24*60*60*1000);
+    }, next - now);
+  }
+
   schedulePendingAlert();
   scheduleSummary();
+  scheduleQueueBacklog();
+}
+
+// แจ้งงานจองค้างส่ง — นับคิวที่ status='booked' (ยังไม่ออกรถ) จากฐานข้อมูลคิวจอง
+async function sendQueueBacklog(){
+  var booked=[];
+  try{
+    if(typeof db!=='undefined' && db){
+      var r=await db.from('bookings').select('data,status');
+      if(r&&r.data){ booked=r.data.filter(function(x){ return x.status==='booked'; }).map(function(x){return x.data||{};}); }
+    } else {
+      var raw=localStorage.getItem('qb_v1'); if(raw){ var st=JSON.parse(raw); if(st&&st.bookings){ booked=st.bookings.filter(function(b){return b.status==='booked';}); } }
+    }
+  }catch(e){ console.warn('queueBacklog',e); return; }
+  if(!booked.length) return; // ไม่มีคิวค้าง ไม่ส่ง
+  var NL='\n'; var SEP='─────────────────';
+  var lbl={deliver:'🚚',receive:'📦',upk:'🏢',klang:'🏭'};
+  var lines=booked.slice(0,15).map(function(b){ return '• '+(lbl[b.type]||'🚚')+' '+(b.bill||'-')+(b.customer?(' — '+b.customer):''); }).join(NL);
+  var more=booked.length>15?(NL+'… และอีก '+(booked.length-15)+' คิว'):'';
+  var msg='📋 งานจองค้างส่ง '+booked.length+' คิว'+NL
+    +'📅 '+new Date().toLocaleDateString('th-TH')+NL
+    +SEP+NL+lines+more+NL+SEP+NL
+    +'⚠️ ยังไม่ได้ออกรถ — กรุณาจัดเที่ยวส่ง';
+  sendTelegramDeliv(msg);
 }
 
 // แจ้งเตือน 16:00 — บิลที่รออนุมัติ
@@ -2417,6 +2489,7 @@ function saveStep2(){
   });
   records[idx].photosAfter=[...photosAfterNew]; // local base64 first
   save();
+  tgDeliverySuccess(records[idx]); // ✅ แจ้ง "จัดส่งสำเร็จ" เข้ากลุ่ม + ปิดคิวจอง
   closeStep2(); renderPending(); updatePendingBadge();
   showSuccess('บันทึกข้อมูลสำเร็จแล้ว', 'บิล '+records[idx].bill+' ส่งสินค้าเรียบร้อยแล้ว 🎉');
 }
