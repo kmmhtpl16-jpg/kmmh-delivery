@@ -1993,9 +1993,13 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   var delivType = document.getElementById('fDeliveryType').value;
   if(!bill && delivType==='deliver'){ toast('err','กรุณากรอกเลขที่บิล'); return; }
   if(!bill){
-    // Auto-generate for receive/upk
-    var prefix = delivType==='upk' ? 'UPK' : 'RCV';
-    bill = prefix + Date.now().toString().slice(-6);
+    // Auto-generate ref — เลขชุดเดียวกับหน้าจองคิว (queue.html): PREFIX-DDMM-NNN
+    var _pfx = {upk:'UPK',receive:'RCV',klang:'KLG'}[delivType] || 'JOB';
+    var _gd = new Date(), _gdd = ('0'+_gd.getDate()).slice(-2)+('0'+(_gd.getMonth()+1)).slice(-2);
+    var _gn = 1, _gref;
+    do { _gref = _pfx+'-'+_gdd+'-'+('00'+_gn).slice(-3); _gn++; }
+    while(records.some(function(r){return (r.bill||'').trim().toUpperCase()===_gref.toUpperCase();}));
+    bill = _gref;
     document.getElementById('fBill').value = bill;
   }
   if(!car){ toast('err','กรุณาเลือกรถ'); return; }
