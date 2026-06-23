@@ -1,5 +1,11 @@
 # CHANGELOG — ระบบจัดส่ง KMMH
 
+## เลขอ้างอิงงานชุดเดียวกัน 2 แอป + ซิงค์สถานะอัตโนมัติ (index v1.7 / queue v2.1) — 23 มิ.ย. 2569
+- รวมสูตรสร้างเลขอ้างอิงงาน receive/upk/klang ให้เหมือนกันทั้ง index.html และ queue.html: PREFIX-DDMM-NNN (UPK / RCV / KLG)
+- เดิม index ใช้ UPK+timestamp 6 หลัก, queue ใช้คำไทย "รับสินค้า/ส่งคลัง" → จับคู่ข้ามแอปไม่ได้
+- DB trigger trg_sync_booking_from_delivery (deliveries→bookings): บันทึกถึง→ส่งสำเร็จ, ยกเลิก→ยกเลิก ตามเลขบิล + คำนวณระยะห่าง
+- DB cron reconcile-booking-delivery 22:30 ทุกวัน = ตาข่ายกันคิว↔จัดส่งไม่ตรงกัน
+
 ## เชื่อมจองคิว↔Step1 เฟส 2 — เที่ยวรวมหลายบิล (queue v2.0 / index v1.5) — 20 มิ.ย. 2569
 - queue.html: dispatchTrip/dispatchGroup (ออกหลายบิลเที่ยวเดียว) → เขียน handoff {mode:trip, bills:[...]} + status delivering + เด้งไป index.html (เอา Telegram ออก ให้ Step1 แจ้งต่อบิล)
 - index.html checkHandoff: ถ้า mode=trip → เปิดโหมดเที่ยวรวม (toggleTripMode) + เติมบิลแรกอัตโนมัติ + โชว์ banner รายการบิลทั้งหมด มีปุ่ม "เติม" (hoFill) ให้กดเติมบิลถัดไปทีละใบ (เลือกรถ/คนขับ/อุปกรณ์ใช้ร่วม กดบันทึกแล้วเติมใบต่อไป) → ค่าเที่ยวรวมเหมือนเดิม (finishTrip)
