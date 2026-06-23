@@ -2011,7 +2011,7 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
     toast('err','กรุณาถ่ายรูปก่อนออกรถอย่างน้อย 2 รูป (มี '+photosBefore.length+' รูป)');
     return;
   }
-  if(records.find(function(r){return r.bill===bill;})){ toast('err','เลขบิล '+bill+' มีในระบบแล้ว'); return; }
+  if(records.find(function(r){return r.bill===bill && r.status!=='cancelled';})){ toast('err','เลขบิล '+bill+' มีในระบบแล้ว'); return; } // ข้ามบิลที่ยกเลิกแล้ว — ใส่เลขเดิมซ้ำได้
   var hlpArr = [...helpers];
   var dest = document.getElementById('fDest').value.trim();
   var delivTypeVal = document.getElementById('fDeliveryType').value;
