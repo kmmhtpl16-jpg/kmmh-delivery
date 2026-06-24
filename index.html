@@ -851,9 +851,11 @@ function tgDeliverySuccess(rec){
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':rec.deliveryType==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า';
   var NL = '\n';
   var dp = destParts(rec.dest);
+  // ลิงก์แผนที่ปลายทาง = พิกัดที่พนักงานบันทึกตอนถึงจริง (gpsArrival) ถ้าไม่มีค่อยใช้ที่จองไว้
+  var mapU = rec.gpsArrival ? ('https://www.google.com/maps?q='+rec.gpsArrival) : dp.url;
   var msg = '🟢 ส่งสำเร็จ · '+rec.bill+NL
     +'🕙 '+(rec.timeArrival?('ถึง '+rec.timeArrival+' · '):'')+(rec.driver||'-')+NL
-    +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(dp.url?(' · <a href="'+dp.url+'">เปิดแผนที่</a>'):'')+NL
+    +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(mapU?(' · <a href="'+mapU+'">เปิดแผนที่</a>'):'')+NL
     +'🎉 ปิดงานเรียบร้อย';
   sendTelegramDeliv(msg);
   markBookingDone(rec.bill);
