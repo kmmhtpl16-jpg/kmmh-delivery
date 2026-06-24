@@ -823,12 +823,20 @@ var _sentBillIds = new Set(JSON.parse(localStorage.getItem('_sentBillIds')||'[]'
 // ป้องกันแจ้ง "จัดส่งสำเร็จ" ซ้ำ — เก็บ record id ที่ส่งแล้ว
 var _sentDoneIds = new Set(JSON.parse(localStorage.getItem('_sentDoneIds')||'[]'));
 
-// แจ้งเตือนเมื่อรถออกส่งสินค้า (ส่งครั้งเดียวต่อบิล)
-function tgNewBill(rec){
-  if(_sentBillIds.has(rec.bill)) return; // เคยส่งแล้ว ไม่ส่งซ้ำ
-  _sentBillIds.add(rec.bill);
-  localStorage.setItem('_sentBillIds', JSON.stringify([..._sentBillIds]));
+// กันแจ้งซ้ำข้ามเครื่อง: จองสิทธิ์ที่ DB (atomic) คืน true=ได้สิทธิ์ส่ง, false=เครื่องอื่นส่งแล้ว, null=เช็ก DB ไม่ได้
+async function claimNotify(id, kind){
+  try{
+    if(typeof db!=='undefined' && db){
+      var r = await db.rpc('claim_notify', {p_id: id, p_kind: kind});
+      if(r.error) throw r.error;
+      return r.data === true;
+    }
+  }catch(e){ console.warn('claimNotify', e && e.message); }
+  return null;
+}
 
+// แจ้งเตือนเมื่อรถออกส่งสินค้า (ส่งครั้งเดียวต่อบิล — เช็กที่ DB ทุกเครื่องเห็นตรงกัน)
+async function tgNewBill(rec){
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า';
   var team = rec.driver + (rec.helpers&&rec.helpers.length?' + '+rec.helpers.join(', '):'');
   var NL = '\n';
@@ -838,16 +846,18 @@ function tgNewBill(rec){
     +typeLabel+' 🚗 '+carShort+' · '+team+NL
     +'🕘 '+rec.date+' ออก '+rec.timeOut
     +(dp.name?(NL+'📍 '+dp.name):'');
-  sendTelegramDeliv(msg);
+  await saveToCloud(rec);                        // ให้แถวมีใน DB ก่อน claim
+  var c = await claimNotify(rec.id, 'out');
+  var doSend = (c === true);
+  if(c === null){                                // เช็ก DB ไม่ได้ -> fallback localStorage
+    if(!_sentBillIds.has(rec.bill)){ _sentBillIds.add(rec.bill); localStorage.setItem('_sentBillIds', JSON.stringify([..._sentBillIds])); doSend=true; }
+  }
+  if(doSend) sendTelegramDeliv(msg);
 }
 
 // แจ้งเตือนเมื่อจัดส่งสำเร็จ (ส่งครั้งเดียวต่อบิล) + อัปเดตคิวจองเป็น "ส่งสำเร็จ"
-function tgDeliverySuccess(rec){
+async function tgDeliverySuccess(rec){
   if(!rec) return;
-  var key = String(rec.id);
-  if(_sentDoneIds.has(key)) return; // เคยแจ้งแล้ว ไม่ซ้ำ
-  _sentDoneIds.add(key);
-  localStorage.setItem('_sentDoneIds', JSON.stringify([..._sentDoneIds]));
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':rec.deliveryType==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า';
   var NL = '\n';
   var dp = destParts(rec.dest);
@@ -857,7 +867,14 @@ function tgDeliverySuccess(rec){
     +'🕙 '+(rec.timeArrival?('ถึง '+rec.timeArrival+' · '):'')+(rec.driver||'-')+NL
     +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(mapU?(' · <a href="'+mapU+'">เปิดแผนที่</a>'):'')+NL
     +'🎉 ปิดงานเรียบร้อย';
-  sendTelegramDeliv(msg);
+  await saveToCloud(rec);                         // ให้ gpsArrival/step2 ลง DB ก่อน claim
+  var c = await claimNotify(rec.id, 'done');
+  var doSend = (c === true);
+  if(c === null){                                // เช็ก DB ไม่ได้ -> fallback localStorage
+    var key = String(rec.id);
+    if(!_sentDoneIds.has(key)){ _sentDoneIds.add(key); localStorage.setItem('_sentDoneIds', JSON.stringify([..._sentDoneIds])); doSend=true; }
+  }
+  if(doSend) sendTelegramDeliv(msg);
   markBookingDone(rec.bill);
 }
 // อัปเดตสถานะคิวจอง (bookings) เป็น done เมื่อส่งสำเร็จ — ทั้ง cloud + local
