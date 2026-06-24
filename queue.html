@@ -88,7 +88,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.1 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.0 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -346,7 +346,7 @@ function updateBillUI(){
   checkDupBill();
 }
 function autoRef(type){
-  var pre={receive:'RCV',upk:'UPK',klang:'KLG'}[type]||'JOB';
+  var pre={receive:'รับสินค้า',upk:'UPK',klang:'ส่งคลัง'}[type]||'งาน';
   var d=new Date(), dd=('0'+d.getDate()).slice(-2)+('0'+(d.getMonth()+1)).slice(-2);
   var n=1, ref;
   do{ ref=pre+'-'+dd+'-'+('00'+n).slice(-3); n++; }
@@ -376,7 +376,7 @@ async function saveBooking(){
     drvLat:null, drvLng:null, gap:null
   });
   save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var m='\uD83D\uDCCB <b>\u0e08\u0e2d\u0e07\u0e04\u0e34\u0e27\u0e2a\u0e48\u0e07\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32\u0e43\u0e2b\u0e21\u0e48</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83D\uDC64 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD '+nb.lat.toFixed(5)+', '+nb.lng.toFixed(5)+' (\u0e17\u0e34\u0e28'+dirOf(nb)+')'; m+='\n\uD83D\uDDFA https://www.google.com/maps?q='+nb.lat+','+nb.lng; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var m='\uD83D\udfe1 <b>\u0e08\u0e2d\u0e07\u0e43\u0e2b\u0e21\u0e48</b> \u00b7 '+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');

@@ -717,7 +717,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.7</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.6</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -801,6 +801,8 @@ const TG_NOTIFY_FN = '/functions/v1/notify-telegram'; // ต่อท้าย S
 
 var DELIV_CHAT='-5142584793';
 function sendTelegramDeliv(msg){ return sendTelegram(msg, DELIV_CHAT); }
+// แยก "ชื่อลูกค้า" กับ "ลิงก์แผนที่" ออกจากกัน (dest = ชื่อ + URL ปนกัน)
+function destParts(d){ d=String(d||''); var i=d.search(/https?:\/\//); if(i<0) return {name:d.trim(), url:''}; return {name:d.slice(0,i).trim(), url:d.slice(i).trim()}; }
 async function sendTelegram(msg,chat_id){
   if(!msg) return;
   try{
@@ -830,13 +832,12 @@ function tgNewBill(rec){
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า';
   var team = rec.driver + (rec.helpers&&rec.helpers.length?' + '+rec.helpers.join(', '):'');
   var NL = '\n';
-  var msg = '🚚 รถออกส่งสินค้าแล้ว' +NL
-    +'📋 '+rec.bill+NL
-    +'📅 '+rec.date+' ออก '+rec.timeOut+NL
-    +typeLabel+' 🚗 '+(rec.car.includes('ผจ-9245')?'ผจ-9245':rec.car.includes('ผม-9721')?'ผม-9721':'84-5763')+NL
-    +'👤 '+team+NL
-    +(rec.dest?'📍 '+rec.dest+NL:'')
-    +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0);
+  var dp = destParts(rec.dest);
+  var carShort = (rec.car.includes('ผจ-9245')?'ผจ-9245':rec.car.includes('ผม-9721')?'ผม-9721':'84-5763');
+  var msg = '🔵 รถออกแล้ว · '+rec.bill+NL
+    +typeLabel+' 🚗 '+carShort+' · '+team+NL
+    +'🕘 '+rec.date+' ออก '+rec.timeOut
+    +(dp.name?(NL+'📍 '+dp.name):'');
   sendTelegramDeliv(msg);
 }
 
@@ -849,12 +850,10 @@ function tgDeliverySuccess(rec){
   localStorage.setItem('_sentDoneIds', JSON.stringify([..._sentDoneIds]));
   var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':rec.deliveryType==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า';
   var NL = '\n';
-  var msg = '✅ จัดส่งสำเร็จ' +NL
-    +'📋 '+rec.bill+NL
-    +'📅 '+rec.date+(rec.timeArrival?(' · ถึง '+rec.timeArrival):'')+NL
-    +typeLabel+NL
-    +'👤 '+(rec.driver||'-')+NL
-    +(rec.dest?'📍 '+rec.dest+NL:'')
+  var dp = destParts(rec.dest);
+  var msg = '🟢 ส่งสำเร็จ · '+rec.bill+NL
+    +'🕙 '+(rec.timeArrival?('ถึง '+rec.timeArrival+' · '):'')+(rec.driver||'-')+NL
+    +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(dp.url?(' · <a href="'+dp.url+'">เปิดแผนที่</a>'):'')+NL
     +'🎉 ปิดงานเรียบร้อย';
   sendTelegramDeliv(msg);
   markBookingDone(rec.bill);
@@ -1993,13 +1992,9 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   var delivType = document.getElementById('fDeliveryType').value;
   if(!bill && delivType==='deliver'){ toast('err','กรุณากรอกเลขที่บิล'); return; }
   if(!bill){
-    // Auto-generate ref — เลขชุดเดียวกับหน้าจองคิว (queue.html): PREFIX-DDMM-NNN
-    var _pfx = {upk:'UPK',receive:'RCV',klang:'KLG'}[delivType] || 'JOB';
-    var _gd = new Date(), _gdd = ('0'+_gd.getDate()).slice(-2)+('0'+(_gd.getMonth()+1)).slice(-2);
-    var _gn = 1, _gref;
-    do { _gref = _pfx+'-'+_gdd+'-'+('00'+_gn).slice(-3); _gn++; }
-    while(records.some(function(r){return (r.bill||'').trim().toUpperCase()===_gref.toUpperCase();}));
-    bill = _gref;
+    // Auto-generate for receive/upk
+    var prefix = delivType==='upk' ? 'UPK' : 'RCV';
+    bill = prefix + Date.now().toString().slice(-6);
     document.getElementById('fBill').value = bill;
   }
   if(!car){ toast('err','กรุณาเลือกรถ'); return; }
