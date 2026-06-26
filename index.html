@@ -574,6 +574,11 @@ textarea{min-height:72px;resize:vertical}
     <div id="empChart"></div>
   </div>
   <div class="card">
+    <div class="card-title">⚠️ พลาดบ่อยรายคน</div>
+    <div style="font-size:11px;color:var(--t3);margin:-4px 0 8px">นับ: ส่งไม่ครบ/ส่งผิด · ไม่มี GPS ออก · รูปไม่ครบ · บิลค้างไม่ปิด (นับให้คนขับ)</div>
+    <div id="errChart"></div>
+  </div>
+  <div class="card">
     <div class="card-title">🚗 เที่ยวรายรถ</div>
     <div id="carChart"></div>
   </div>
@@ -1041,6 +1046,31 @@ function sendDailySummary(){
 // ==================== MONTHLY SUMMARY (สรุปสิ้นเดือน) ====================
 function _ymOf(d){ if(!d) return ''; d=String(d); if(d.charAt(4)==='-') return d.slice(0,7);
   var m=d.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m){ return (parseInt(m[3],10)-543)+'-'+('0'+m[2]).slice(-2); } return ''; }
+// นับ "พลาด" รายคน — attribute ให้คนขับของบิล (ส่งไม่ครบ/ส่งผิด + ไม่มี GPS ออก + รูปไม่ครบ + บิลค้างไม่ปิด)
+function computeErrorStats(recs){
+  var m={};
+  function ens(n){ if(!m[n]) m[n]={jobs:0,problem:0,penalty:0,noGps:0,photo:0,pending:0}; return m[n]; }
+  (recs||[]).forEach(function(r){
+    if(!r || r.status==='cancelled') return;
+    var o=ens(r.driver||'-'); o.jobs++;
+    var bad=false;
+    if(r.incomplete){ o.penalty++; bad=true; }
+    if(!r.gpsOut){ o.noGps++; bad=true; }
+    var pb=(r.photosBefore||[]).length, pa=(r.photosAfter||[]).length;
+    if(pb<2 || (r.step2Done && pa<1)){ o.photo++; bad=true; }
+    if(!r.step2Done){ o.pending++; bad=true; }
+    if(bad) o.problem++;
+  });
+  return m;
+}
+function errParts(o){
+  var parts=[];
+  if(o.penalty)parts.push('ส่งไม่ครบ/ผิด '+o.penalty);
+  if(o.noGps)parts.push('ไม่มี GPS '+o.noGps);
+  if(o.photo)parts.push('รูปไม่ครบ '+o.photo);
+  if(o.pending)parts.push('ค้าง '+o.pending);
+  return parts;
+}
 function sendMonthlySummary(ym){
   var now=new Date();
   var Y = ym? parseInt(ym.slice(0,4),10) : now.getFullYear();
@@ -1072,6 +1102,13 @@ function sendMonthlySummary(ym){
   msg+='💰 ค่าเที่ยว/ค่าแรงรวม: ฿'+Math.round(tripSum).toLocaleString()+NL;
   var names=Object.keys(byPerson).sort(function(a,b){return byPerson[b].pay-byPerson[a].pay;});
   if(names.length){ msg+='👤 ค่าแรงรายคน:'+NL; names.forEach(function(nm){ var o=byPerson[nm]; var parts=[]; if(o.drive)parts.push('ขับ '+o.drive); if(o.help)parts.push('ผู้ช่วย '+o.help); msg+='   • '+nm+' — '+parts.join(', ')+' · ฿'+Math.round(o.pay).toLocaleString()+NL; }); }
+  var errStats=computeErrorStats(recs);
+  var errNames=Object.keys(errStats).filter(function(n){return errStats[n].problem>0;}).sort(function(a,b){return errStats[b].problem-errStats[a].problem;});
+  msg+=SEP+NL+'⚠️ พลาดรายคน (มาก→น้อย):'+NL;
+  if(errNames.length){
+    errNames.forEach(function(nm){ var o=errStats[nm]; var rate=o.jobs?Math.round(o.problem/o.jobs*100):0;
+      msg+='   • '+nm+' — พลาด '+o.problem+'/'+o.jobs+' ('+rate+'%)'+NL+'      ↳ '+errParts(o).join(' · ')+NL; });
+  } else { msg+='   ✅ เดือนนี้ไม่มีใครพลาด'+NL; }
   msg+=SEP+NL;
   msg+='⛽ น้ำมัน: '+fuel.length+' ครั้ง · '+(Math.round(fuelL*10)/10).toLocaleString()+' ลิตร · ฿'+Math.round(fuelBaht).toLocaleString()+NL;
   msg+=SEP+NL;
@@ -3512,6 +3549,21 @@ function renderReport(){
   document.getElementById('empChart').innerHTML=ea.length
     ?ea.map(function(x){var t=x[1].base+x[1].bonus,p=(t/mxE*100).toFixed(0);return '<div class="rep-bar-row"><div class="rep-bar-label">'+x[0]+'</div><div class="rep-bar-track"><div class="rep-bar-fill" style="width:'+p+'%">'+x[1].t+'ครั้ง</div></div><div class="rep-bar-val">฿'+Math.round(t).toLocaleString()+'</div></div>';}).join('')
     :'<div class="empty" style="padding:20px"><p>ยังไม่มีข้อมูล</p></div>';
+  var errStats=computeErrorStats(records.filter(function(r){ return r.status!=='cancelled' && (!month||r.date.startsWith(month)); }));
+  var es=Object.entries(errStats).filter(function(x){return x[1].jobs>0;}).sort(function(a,b){return (b[1].problem-a[1].problem)||(b[1].jobs-a[1].jobs);});
+  var errEl=document.getElementById('errChart');
+  if(errEl){ errEl.innerHTML = es.length
+    ? es.map(function(x){ var o=x[1]; var rate=o.jobs?Math.round(o.problem/o.jobs*100):0;
+        var color=o.problem===0?'var(--green)':(rate>=30?'var(--red)':'var(--amber)');
+        var parts=errParts(o);
+        return '<div style="padding:10px 0;border-bottom:0.5px solid var(--border)">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center">'
+          +'<span style="font-weight:700">'+x[0]+'</span>'
+          +'<span style="font-size:13px;font-weight:700;color:'+color+'">พลาด '+o.problem+'/'+o.jobs+' ('+rate+'%)</span></div>'
+          +(parts.length?'<div style="font-size:11.5px;color:var(--t2);margin-top:3px">↳ '+parts.join(' · ')+'</div>':'<div style="font-size:11.5px;color:var(--green);margin-top:3px">✓ ไม่มีพลาด</div>')
+          +'</div>';
+      }).join('')
+    : '<div class="empty" style="padding:20px"><p>ยังไม่มีข้อมูล</p></div>'; }
   var cm={};
   f.forEach(function(r){cm[r.car]=(cm[r.car]||0)+1;});
   var ca=Object.entries(cm).sort(function(a,b){return b[1]-a[1];});
