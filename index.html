@@ -296,14 +296,18 @@ textarea{min-height:72px;resize:vertical}
     <div class="card" id="incompleteCard" style="margin-bottom:14px;border:0.5px solid #fac775;background:var(--amber-bg)">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="flex:1">
-          <div style="font-size:14px;font-weight:800;color:var(--amber)">🚧 ส่งของไม่ครบ</div>
-          <div style="font-size:11.5px;color:var(--t2);margin-top:2px">หักค่าเที่ยว 50% (คนขับ + ผู้ช่วยทุกคน)</div>
+          <div style="font-size:14px;font-weight:800;color:var(--amber)">🚧 หักค่าเที่ยว 50%</div>
+          <div style="font-size:11.5px;color:var(--t2);margin-top:2px">ส่งไม่ครบ / ส่งผิด (คนขับ + ผู้ช่วยทุกคน)</div>
         </div>
         <div class="trip-switch" id="incompleteToggle" onclick="toggleIncomplete()" role="switch" aria-checked="false"><span class="trip-switch-knob"></span></div>
       </div>
       <div id="incompleteReasonWrap" style="display:none;margin-top:12px">
-        <label class="lbl" style="color:var(--red)">* เหตุผลที่ส่งไม่ครบ (บังคับ)</label>
-        <input type="text" id="step2IncompleteReason" placeholder="เช่น ของขาด / ลูกค้าไม่รับบางส่วน / รถบรรทุกไม่พอ" oninput="updateIncompletePreview()">
+        <div class="seg" id="penTypeSeg" style="margin-bottom:10px">
+          <button type="button" class="seg-btn active" id="penBtnIncomplete" onclick="setPenType('incomplete')">📦 ส่งไม่ครบ</button>
+          <button type="button" class="seg-btn" id="penBtnWrong" onclick="setPenType('wrong')">❌ ส่งผิด</button>
+        </div>
+        <label class="lbl" style="color:var(--red)">* เหตุผล (บังคับ)</label>
+        <input type="text" id="step2IncompleteReason" placeholder="เช่น ของขาด / ส่งผิดบ้าน / ลูกค้าไม่รับบางส่วน" oninput="updateIncompletePreview()">
         <div id="incompletePreview" style="margin-top:8px;font-size:12px;color:var(--amber);font-weight:600"></div>
       </div>
     </div>
@@ -877,10 +881,11 @@ async function tgDeliverySuccess(rec){
   var dp = destParts(rec.dest);
   // ลิงก์แผนที่ปลายทาง = พิกัดที่พนักงานบันทึกตอนถึงจริง (gpsArrival) ถ้าไม่มีค่อยใช้ที่จองไว้
   var mapU = rec.gpsArrival ? ('https://www.google.com/maps?q='+rec.gpsArrival) : dp.url;
+  var penL = (rec.penaltyType==='wrong')?'ส่งผิด':'ส่งไม่ครบ';
   var incLine = rec.incomplete
-    ? ('⚠️ ส่งไม่ครบ — หักค่าเที่ยว 50% (฿'+Math.round((rec.tripTotal||0)*2)+' → ฿'+Math.round(rec.tripTotal||0)+')'+NL+'📝 เหตุผล: '+(rec.incompleteReason||'-')+NL)
+    ? ('⚠️ '+penL+' — หักค่าเที่ยว 50% (฿'+Math.round((rec.tripTotal||0)*2)+' → ฿'+Math.round(rec.tripTotal||0)+')'+NL+'📝 เหตุผล: '+(rec.incompleteReason||'-')+NL)
     : '';
-  var msg = (rec.incomplete?'🟡 ส่งสำเร็จ (ไม่ครบ) · ':'🟢 ส่งสำเร็จ · ')+rec.bill+NL
+  var msg = (rec.incomplete?('🟡 ส่งสำเร็จ ('+penL+') · '):'🟢 ส่งสำเร็จ · ')+rec.bill+NL
     +'🕙 '+(rec.timeArrival?('ถึง '+rec.timeArrival+' · '):'')+(rec.driver||'-')+NL
     +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(mapU?(' · <a href="'+mapU+'">เปิดแผนที่</a>'):'')+NL
     +incLine
@@ -1326,7 +1331,7 @@ function recToDb(r){
     crane: r.crane||false, labor: r.labor||false, extra_pp: r.extraPP||0,
     driver_total: r.driverTotal||0, helper_total: r.helperTotal||0,
     trip_total: r.tripTotal||0,
-    incomplete: r.incomplete||false, incomplete_reason: r.incompleteReason||'',
+    incomplete: r.incomplete||false, incomplete_reason: r.incompleteReason||'', penalty_type: r.penaltyType||'',
     trip_id: r.tripId||null,
     gps_out: r.gpsOut||'', gps_arrival: r.gpsArrival||'',
     time_out: r.timeOut||'', time_arrival: r.timeArrival||'',
@@ -1350,7 +1355,7 @@ function dbToRec(row){
     crane: row.crane, labor: row.labor, extraPP: row.extra_pp,
     driverTotal: row.driver_total, helperTotal: row.helper_total,
     tripTotal: row.trip_total,
-    incomplete: row.incomplete||false, incompleteReason: row.incomplete_reason||'',
+    incomplete: row.incomplete||false, incompleteReason: row.incomplete_reason||'', penaltyType: row.penalty_type||'',
     tripId: row.trip_id||null,
     gpsOut: row.gps_out||'', gpsArrival: row.gps_arrival||'',
     timeOut: row.time_out||'', timeArrival: row.time_arrival||'',
@@ -2077,7 +2082,7 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
     brickOn, brickQty, brickTotal, brickPP,
     crane, labor, extraPP,
     driverTotal:drvTotal, helperTotal:hlpTotal, tripTotal,
-    incomplete:false, incompleteReason:'',
+    incomplete:false, incompleteReason:'', penaltyType:'',
     tripId: tripMode ? currentTripId : null,
     gpsOut:document.getElementById('fGpsOut').value,
     photosBefore:[...photosBefore],
@@ -2498,9 +2503,11 @@ function openStep2(id){
   photosAfterNew=[];
   renderPhotoGrid('photoAfterStrip',photosAfterNew,'upAfter2');
   document.getElementById('photoAfterCount').style.display='none';
-  // ส่งไม่ครบ — หักค่าเที่ยว 50%
+  // ส่งไม่ครบ/ส่งผิด — หักค่าเที่ยว 50%
   window._step2FullTrip = r.incomplete ? (r.tripTotal||0)*2 : (r.tripTotal||0);
+  window._step2PenType = (r.penaltyType==='wrong')?'wrong':'incomplete';
   document.getElementById('step2IncompleteReason').value = r.incompleteReason||'';
+  setPenType(window._step2PenType);
   setIncompleteUI(!!r.incomplete);
   document.getElementById('step2Modal').classList.add('show');
 }
@@ -2512,12 +2519,19 @@ function setIncompleteUI(on){
   document.getElementById('incompleteReasonWrap').style.display = on?'block':'none';
   updateIncompletePreview();
 }
+function setPenType(t){
+  window._step2PenType = (t==='wrong')?'wrong':'incomplete';
+  var a=document.getElementById('penBtnIncomplete'), b=document.getElementById('penBtnWrong');
+  if(a&&b){ a.classList.toggle('active', window._step2PenType==='incomplete'); b.classList.toggle('active', window._step2PenType==='wrong'); }
+  updateIncompletePreview();
+}
 function toggleIncomplete(){ setIncompleteUI(!window._step2Inc); }
 function updateIncompletePreview(){
   var el=document.getElementById('incompletePreview'); if(!el) return;
   if(!window._step2Inc){ el.textContent=''; return; }
+  var label=(window._step2PenType==='wrong')?'ส่งผิด':'ส่งไม่ครบ';
   var full=window._step2FullTrip||0;
-  el.textContent='💰 ค่าเที่ยว ฿'+Math.round(full)+' → หัก 50% เหลือ ฿'+Math.round(full*0.5);
+  el.textContent='['+label+'] 💰 ฿'+Math.round(full)+' → หัก 50% เหลือ ฿'+Math.round(full*0.5);
 }
 function closeStep2(){
   document.getElementById('step2Modal').classList.remove('show');
@@ -2535,7 +2549,7 @@ function saveStep2(){
   var incomplete = !!window._step2Inc;
   var incReason = document.getElementById('step2IncompleteReason').value.trim();
   if(incomplete && !incReason){ toast('err','กรุณากรอกเหตุผลที่ส่งไม่ครบ'); return; }
-  applyIncomplete(records[idx], incomplete, incReason);
+  applyIncomplete(records[idx], incomplete, incReason, window._step2PenType);
   var now = new Date();
   records[idx].gpsArrival=gps;
   records[idx].timeArrival=now.toTimeString().slice(0,5);
@@ -2603,7 +2617,7 @@ function renderHistory(){
       +'<span class="badge '+typeBadge+'">'+typeLabel+'</span> '
       +'<span class="badge '+carBadge+'">'+carShort+'</span>'
       +(done?'<span class="badge b-green">✓ ส่งครบ</span>':'<span class="badge b-red">📷 รอส่งรูป</span>')
-      +(r.incomplete?'<span class="badge b-red">🚧 ส่งไม่ครบ</span>':'')
+      +(r.incomplete?('<span class="badge b-red">🚧 '+penaltyLabel(r)+'</span>'):'')
       +(r.brickOn||r.crane||r.labor?'<span class="badge b-amber">⭐พิเศษ</span>':'')
       +(pc?'<span class="badge b-gray">📷'+pc+'</span>':'')
       +'<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
@@ -2656,7 +2670,7 @@ function showDetail(id){
     +'<strong style="color:var(--green)">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</strong></div>';
   if(r.incomplete){
     html += '<div style="background:var(--amber-bg);border:0.5px solid #fac775;border-radius:8px;padding:10px;font-size:13px;color:var(--amber);margin:6px 0">'
-      +'🚧 <strong>ส่งไม่ครบ — หักค่าเที่ยว 50%</strong> (฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+' → ฿'+Math.round(r.tripTotal||0).toLocaleString()+')<br>📝 '+(r.incompleteReason||'-')+'</div>';
+      +'🚧 <strong>'+penaltyLabel(r)+' — หักค่าเที่ยว 50%</strong> (฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+' → ฿'+Math.round(r.tripTotal||0).toLocaleString()+')<br>📝 '+(r.incompleteReason||'-')+'</div>';
   }
   if(r.brickOn||r.crane||r.labor){
     html += '<div style="background:var(--amber-bg);border-radius:8px;padding:10px;font-size:13px;color:var(--amber);margin:6px 0">⭐ '
@@ -2694,11 +2708,14 @@ function showDetail(id){
   if(!done){
     html += '<button class="btn btn-blue" onclick="closeDetail();setTimeout(function(){openStep2('+r.id+')},200)" style="margin-top:16px;margin-bottom:8px">📍 บันทึกถึงปลายทาง</button>';
   }
-  // ปุ่มทำเครื่องหมายส่งไม่ครบ — ผู้ใช้ทั่วไปก็กดได้ (ผู้ขาย/คนคีย์บิล)
+  // ปุ่มหักค่าเที่ยว — ผู้ใช้ทั่วไปก็กดได้ (ผู้ขาย/คนคีย์บิล)
   if(r.incomplete){
-    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px;color:var(--green)" onclick="unmarkIncomplete('+r.id+')">↩️ ยกเลิกส่งไม่ครบ (คืนค่าเที่ยวเต็ม)</button>';
+    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px;color:var(--green)" onclick="unmarkIncomplete('+r.id+')">↩️ ยกเลิก'+penaltyLabel(r)+' (คืนค่าเที่ยวเต็ม)</button>';
   } else {
-    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px;color:var(--amber)" onclick="markIncomplete('+r.id+')">🚧 ส่งไม่ครบ — หักค่าเที่ยว 50%</button>';
+    html += '<div style="display:flex;gap:8px;margin-top:8px">'
+      +'<button class="btn btn-ghost" style="flex:1;color:var(--amber)" onclick="markIncomplete('+r.id+',\'incomplete\')">🚧 ส่งไม่ครบ</button>'
+      +'<button class="btn btn-ghost" style="flex:1;color:var(--amber)" onclick="markIncomplete('+r.id+',\'wrong\')">❌ ส่งผิด</button></div>'
+      +'<div style="font-size:11px;color:var(--t3);text-align:center;margin:4px 0 6px">หักค่าเที่ยว 50% เท่ากันทั้งสองแบบ</div>';
   }
   // Show edit button for admin/owner
   if(currentRole==='admin'||currentRole==='owner'){
@@ -2829,7 +2846,8 @@ async function confirmEdit(){
 }
 
 // ==================== ส่งไม่ครบ — หักค่าเที่ยว 50% (ใช้ร่วม Step2 + หน้ารายละเอียด) ====================
-function applyIncomplete(rec, incomplete, reason){
+function penaltyLabel(rec){ return (rec&&rec.penaltyType==='wrong')?'ส่งผิด':'ส่งไม่ครบ'; }
+function applyIncomplete(rec, incomplete, reason, type){
   var wasInc = !!rec.incomplete;
   var fullTrip = wasInc ? (rec.tripTotal||0)*2 : (rec.tripTotal||0);
   var fullDrv  = wasInc ? (rec.driverTotal||0)*2 : (rec.driverTotal||0);
@@ -2837,36 +2855,40 @@ function applyIncomplete(rec, incomplete, reason){
   var f = incomplete ? 0.5 : 1;
   rec.tripTotal=fullTrip*f; rec.driverTotal=fullDrv*f; rec.helperTotal=fullHlp*f;
   rec.incomplete=incomplete; rec.incompleteReason=incomplete?(reason||''):'';
+  rec.penaltyType = incomplete ? ((type==='wrong')?'wrong':'incomplete') : '';
 }
-function logIncomplete(rec, incomplete, reason){
+function logIncomplete(rec, incomplete, reason, label){
   try{
+    label=label||penaltyLabel(rec);
     var logs=JSON.parse(localStorage.getItem('kmmh_restore_logs')||'[]');
     logs.unshift({bill:rec.bill, action:'edit', role:(typeof currentRole!=='undefined'?currentRole:'user'),
       reason:reason||'',
-      changes: incomplete?('ส่งไม่ครบ — หักค่าเที่ยว 50% (เหลือ ฿'+Math.round(rec.tripTotal||0)+')'):'ยกเลิกส่งไม่ครบ — คืนค่าเที่ยวเต็ม',
+      changes: incomplete?(label+' — หักค่าเที่ยว 50% (เหลือ ฿'+Math.round(rec.tripTotal||0)+')'):('ยกเลิก'+label+' — คืนค่าเที่ยวเต็ม'),
       timestamp:new Date().toISOString(), datetime:new Date().toLocaleString('th-TH')});
     localStorage.setItem('kmmh_restore_logs', JSON.stringify(logs));
   }catch(e){}
 }
-function markIncomplete(id){
+function markIncomplete(id, type){
   var r=records.find(function(x){return x.id===id;}); if(!r) return;
-  var reason=prompt('ระบุเหตุผลที่ส่งไม่ครบ (ระบบจะหักค่าเที่ยว 50%)', r.incompleteReason||'');
+  var label=(type==='wrong')?'ส่งผิด':'ส่งไม่ครบ';
+  var reason=prompt('ระบุเหตุผล ('+label+' — หักค่าเที่ยว 50%)', (r.incomplete?r.incompleteReason:'')||'');
   if(reason===null) return;
   reason=(reason||'').trim();
-  if(!reason){ toast('err','กรุณากรอกเหตุผลที่ส่งไม่ครบ'); return; }
-  applyIncomplete(r, true, reason);
+  if(!reason){ toast('err','กรุณากรอกเหตุผล'); return; }
+  applyIncomplete(r, true, reason, type);
   r.lastEditedBy=(typeof currentRole!=='undefined'?currentRole:'user'); r.lastEditedAt=new Date().toISOString();
-  logIncomplete(r, true, reason);
+  logIncomplete(r, true, reason, label);
   save(); if(typeof saveToCloud==='function') saveToCloud(r);
-  toast('ok','✓ ส่งไม่ครบ — หักค่าเที่ยว 50% แล้ว');
+  toast('ok','✓ '+label+' — หักค่าเที่ยว 50% แล้ว');
   closeDetail(); renderHistory(); renderPending(); if(typeof updatePendingBadge==='function') updatePendingBadge();
 }
 function unmarkIncomplete(id){
   var r=records.find(function(x){return x.id===id;}); if(!r) return;
-  if(!confirm('ยกเลิกสถานะ "ส่งไม่ครบ" และคืนค่าเที่ยวเต็ม?')) return;
+  var prevLabel=penaltyLabel(r);
+  if(!confirm('ยกเลิกสถานะ "'+prevLabel+'" และคืนค่าเที่ยวเต็ม?')) return;
   applyIncomplete(r, false, '');
   r.lastEditedBy=(typeof currentRole!=='undefined'?currentRole:'user'); r.lastEditedAt=new Date().toISOString();
-  logIncomplete(r, false, '');
+  logIncomplete(r, false, '', prevLabel);
   save(); if(typeof saveToCloud==='function') saveToCloud(r);
   toast('ok','✓ คืนค่าเที่ยวเต็มแล้ว');
   closeDetail(); renderHistory(); renderPending(); if(typeof updatePendingBadge==='function') updatePendingBadge();
@@ -3602,7 +3624,7 @@ function exportExcel(){
   if(typeof XLSX === 'undefined'){ toast('err','โหลด SheetJS ไม่สำเร็จ ลองใช้ Export CSV แทน'); return; }
 
   // ---- Sheet 1: รายการจัดส่ง ----
-  var headers1 = ['วันที่','เลขบิล','ลูกค้า/ปลายทาง','รถ','คนขับ','ผู้ช่วย','ค่าเที่ยวรวม (฿)','คนขับได้ (฿)','ผู้ช่วยได้ (฿)','อิฐบล็อก (ก้อน)','โบนัสอิฐ (฿)','ใช้เครน','ใช้แรงงาน','ส่งไม่ครบ','เหตุผลส่งไม่ครบ','เวลาออก','เวลาถึง','GPS ออก','GPS ถึง','ระยะทางคาดการณ์ (กม.)','หมายเหตุ','สถานะ'];
+  var headers1 = ['วันที่','เลขบิล','ลูกค้า/ปลายทาง','รถ','คนขับ','ผู้ช่วย','ค่าเที่ยวรวม (฿)','คนขับได้ (฿)','ผู้ช่วยได้ (฿)','อิฐบล็อก (ก้อน)','โบนัสอิฐ (฿)','ใช้เครน','ใช้แรงงาน','ส่งไม่ครบ/ส่งผิด','เหตุผลหักค่าเที่ยว','เวลาออก','เวลาถึง','GPS ออก','GPS ถึง','ระยะทางคาดการณ์ (กม.)','หมายเหตุ','สถานะ'];
   var rows1 = [headers1];
   data.forEach(function(r){
     var distNum = calcDistance(r.gpsOut, r.gpsArrival);
@@ -3617,7 +3639,7 @@ function exportExcel(){
       r.brickTotal ? parseFloat(r.brickTotal.toFixed(2)) : 0,
       r.crane ? 'ใช่' : '',
       r.labor ? 'ใช่' : '',
-      r.incomplete ? 'ใช่' : '',
+      r.incomplete ? (r.penaltyType==='wrong'?'ส่งผิด':'ส่งไม่ครบ') : '',
       r.incomplete ? (r.incompleteReason||'') : '',
       r.timeOut||'', r.timeArrival||'',
       r.gpsOut||'', r.gpsArrival||'',
