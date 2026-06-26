@@ -2535,16 +2535,7 @@ function saveStep2(){
   var incomplete = !!window._step2Inc;
   var incReason = document.getElementById('step2IncompleteReason').value.trim();
   if(incomplete && !incReason){ toast('err','กรุณากรอกเหตุผลที่ส่งไม่ครบ'); return; }
-  var wasInc = !!records[idx].incomplete;
-  var fullTrip = wasInc ? (records[idx].tripTotal||0)*2 : (records[idx].tripTotal||0);
-  var fullDrv  = wasInc ? (records[idx].driverTotal||0)*2 : (records[idx].driverTotal||0);
-  var fullHlp  = wasInc ? (records[idx].helperTotal||0)*2 : (records[idx].helperTotal||0);
-  var incF = incomplete ? 0.5 : 1;
-  records[idx].tripTotal   = fullTrip*incF;
-  records[idx].driverTotal = fullDrv*incF;
-  records[idx].helperTotal = fullHlp*incF;
-  records[idx].incomplete = incomplete;
-  records[idx].incompleteReason = incomplete ? incReason : '';
+  applyIncomplete(records[idx], incomplete, incReason);
   var now = new Date();
   records[idx].gpsArrival=gps;
   records[idx].timeArrival=now.toTimeString().slice(0,5);
@@ -2703,6 +2694,12 @@ function showDetail(id){
   if(!done){
     html += '<button class="btn btn-blue" onclick="closeDetail();setTimeout(function(){openStep2('+r.id+')},200)" style="margin-top:16px;margin-bottom:8px">📍 บันทึกถึงปลายทาง</button>';
   }
+  // ปุ่มทำเครื่องหมายส่งไม่ครบ — ผู้ใช้ทั่วไปก็กดได้ (ผู้ขาย/คนคีย์บิล)
+  if(r.incomplete){
+    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px;color:var(--green)" onclick="unmarkIncomplete('+r.id+')">↩️ ยกเลิกส่งไม่ครบ (คืนค่าเที่ยวเต็ม)</button>';
+  } else {
+    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px;color:var(--amber)" onclick="markIncomplete('+r.id+')">🚧 ส่งไม่ครบ — หักค่าเที่ยว 50%</button>';
+  }
   // Show edit button for admin/owner
   if(currentRole==='admin'||currentRole==='owner'){
     html += '<button class="btn btn-ghost" style="margin-top:12px;margin-bottom:6px" onclick="openEditModal('+r.id+');closeDetail()">✏️ แก้ไขข้อมูลบิล</button>';
@@ -2829,6 +2826,50 @@ async function confirmEdit(){
   renderHistory();
   renderAdmin();
   toast('ok','✓ แก้ไขบิล '+newBill+' สำเร็จ');
+}
+
+// ==================== ส่งไม่ครบ — หักค่าเที่ยว 50% (ใช้ร่วม Step2 + หน้ารายละเอียด) ====================
+function applyIncomplete(rec, incomplete, reason){
+  var wasInc = !!rec.incomplete;
+  var fullTrip = wasInc ? (rec.tripTotal||0)*2 : (rec.tripTotal||0);
+  var fullDrv  = wasInc ? (rec.driverTotal||0)*2 : (rec.driverTotal||0);
+  var fullHlp  = wasInc ? (rec.helperTotal||0)*2 : (rec.helperTotal||0);
+  var f = incomplete ? 0.5 : 1;
+  rec.tripTotal=fullTrip*f; rec.driverTotal=fullDrv*f; rec.helperTotal=fullHlp*f;
+  rec.incomplete=incomplete; rec.incompleteReason=incomplete?(reason||''):'';
+}
+function logIncomplete(rec, incomplete, reason){
+  try{
+    var logs=JSON.parse(localStorage.getItem('kmmh_restore_logs')||'[]');
+    logs.unshift({bill:rec.bill, action:'edit', role:(typeof currentRole!=='undefined'?currentRole:'user'),
+      reason:reason||'',
+      changes: incomplete?('ส่งไม่ครบ — หักค่าเที่ยว 50% (เหลือ ฿'+Math.round(rec.tripTotal||0)+')'):'ยกเลิกส่งไม่ครบ — คืนค่าเที่ยวเต็ม',
+      timestamp:new Date().toISOString(), datetime:new Date().toLocaleString('th-TH')});
+    localStorage.setItem('kmmh_restore_logs', JSON.stringify(logs));
+  }catch(e){}
+}
+function markIncomplete(id){
+  var r=records.find(function(x){return x.id===id;}); if(!r) return;
+  var reason=prompt('ระบุเหตุผลที่ส่งไม่ครบ (ระบบจะหักค่าเที่ยว 50%)', r.incompleteReason||'');
+  if(reason===null) return;
+  reason=(reason||'').trim();
+  if(!reason){ toast('err','กรุณากรอกเหตุผลที่ส่งไม่ครบ'); return; }
+  applyIncomplete(r, true, reason);
+  r.lastEditedBy=(typeof currentRole!=='undefined'?currentRole:'user'); r.lastEditedAt=new Date().toISOString();
+  logIncomplete(r, true, reason);
+  save(); if(typeof saveToCloud==='function') saveToCloud(r);
+  toast('ok','✓ ส่งไม่ครบ — หักค่าเที่ยว 50% แล้ว');
+  closeDetail(); renderHistory(); renderPending(); if(typeof updatePendingBadge==='function') updatePendingBadge();
+}
+function unmarkIncomplete(id){
+  var r=records.find(function(x){return x.id===id;}); if(!r) return;
+  if(!confirm('ยกเลิกสถานะ "ส่งไม่ครบ" และคืนค่าเที่ยวเต็ม?')) return;
+  applyIncomplete(r, false, '');
+  r.lastEditedBy=(typeof currentRole!=='undefined'?currentRole:'user'); r.lastEditedAt=new Date().toISOString();
+  logIncomplete(r, false, '');
+  save(); if(typeof saveToCloud==='function') saveToCloud(r);
+  toast('ok','✓ คืนค่าเที่ยวเต็มแล้ว');
+  closeDetail(); renderHistory(); renderPending(); if(typeof updatePendingBadge==='function') updatePendingBadge();
 }
 
 function promptDel(id){
