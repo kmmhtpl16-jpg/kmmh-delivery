@@ -293,6 +293,20 @@ textarea{min-height:72px;resize:vertical}
       <input type="file" id="upAfter2" accept="image/*" multiple style="display:none" onchange="addPhotosStep2(this)">
       <div id="photoAfterCount" class="photo-count-badge">📷 <span id="photoAfterNum">0</span> รูป</div>
     </div>
+    <div class="card" id="incompleteCard" style="margin-bottom:14px;border:0.5px solid #fac775;background:var(--amber-bg)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:800;color:var(--amber)">🚧 ส่งของไม่ครบ</div>
+          <div style="font-size:11.5px;color:var(--t2);margin-top:2px">หักค่าเที่ยว 50% (คนขับ + ผู้ช่วยทุกคน)</div>
+        </div>
+        <div class="trip-switch" id="incompleteToggle" onclick="toggleIncomplete()" role="switch" aria-checked="false"><span class="trip-switch-knob"></span></div>
+      </div>
+      <div id="incompleteReasonWrap" style="display:none;margin-top:12px">
+        <label class="lbl" style="color:var(--red)">* เหตุผลที่ส่งไม่ครบ (บังคับ)</label>
+        <input type="text" id="step2IncompleteReason" placeholder="เช่น ของขาด / ลูกค้าไม่รับบางส่วน / รถบรรทุกไม่พอ" oninput="updateIncompletePreview()">
+        <div id="incompletePreview" style="margin-top:8px;font-size:12px;color:var(--amber);font-weight:600"></div>
+      </div>
+    </div>
     <div class="card" style="margin-bottom:14px">
       <div class="card-title">📝 หมายเหตุ</div>
       <textarea id="step2Note" placeholder="บันทึกเพิ่มเติม..."></textarea>
@@ -863,9 +877,13 @@ async function tgDeliverySuccess(rec){
   var dp = destParts(rec.dest);
   // ลิงก์แผนที่ปลายทาง = พิกัดที่พนักงานบันทึกตอนถึงจริง (gpsArrival) ถ้าไม่มีค่อยใช้ที่จองไว้
   var mapU = rec.gpsArrival ? ('https://www.google.com/maps?q='+rec.gpsArrival) : dp.url;
-  var msg = '🟢 ส่งสำเร็จ · '+rec.bill+NL
+  var incLine = rec.incomplete
+    ? ('⚠️ ส่งไม่ครบ — หักค่าเที่ยว 50% (฿'+Math.round((rec.tripTotal||0)*2)+' → ฿'+Math.round(rec.tripTotal||0)+')'+NL+'📝 เหตุผล: '+(rec.incompleteReason||'-')+NL)
+    : '';
+  var msg = (rec.incomplete?'🟡 ส่งสำเร็จ (ไม่ครบ) · ':'🟢 ส่งสำเร็จ · ')+rec.bill+NL
     +'🕙 '+(rec.timeArrival?('ถึง '+rec.timeArrival+' · '):'')+(rec.driver||'-')+NL
     +'💰 ค่าเที่ยว ฿'+Math.round(rec.tripTotal||0)+(mapU?(' · <a href="'+mapU+'">เปิดแผนที่</a>'):'')+NL
+    +incLine
     +'🎉 ปิดงานเรียบร้อย';
   await saveToCloud(rec);                         // ให้ gpsArrival/step2 ลง DB ก่อน claim
   var c = await claimNotify(rec.id, 'done');
@@ -1036,7 +1054,7 @@ function sendMonthlySummary(ym){
   var tripSum=active.reduce(function(s,r){return s+(+r.tripTotal||0);},0);
   var byPerson={};
   function _ens(n){ if(!byPerson[n]) byPerson[n]={drive:0,help:0,pay:0}; return byPerson[n]; }
-  active.forEach(function(r){ var o=_ens(r.driver||'-'); o.drive++; o.pay+=(+r.driverTotal||0); (r.helpers||[]).forEach(function(h){ var p=_ens(h); p.help++; p.pay+=20; }); });
+  active.forEach(function(r){ var o=_ens(r.driver||'-'); o.drive++; o.pay+=(+r.driverTotal||0); (r.helpers||[]).forEach(function(h){ var p=_ens(h); p.help++; p.pay+=(+r.helperTotal||20); }); });
   var allFuel=(typeof fuelRecords!=='undefined'&&fuelRecords)?fuelRecords:[];
   var fuel=allFuel.filter(function(f){ return _ymOf(f.date)===key; });
   var fuelBaht=fuel.reduce(function(s,f){return s+(+f.amount||0);},0);
@@ -1308,6 +1326,7 @@ function recToDb(r){
     crane: r.crane||false, labor: r.labor||false, extra_pp: r.extraPP||0,
     driver_total: r.driverTotal||0, helper_total: r.helperTotal||0,
     trip_total: r.tripTotal||0,
+    incomplete: r.incomplete||false, incomplete_reason: r.incompleteReason||'',
     trip_id: r.tripId||null,
     gps_out: r.gpsOut||'', gps_arrival: r.gpsArrival||'',
     time_out: r.timeOut||'', time_arrival: r.timeArrival||'',
@@ -1331,6 +1350,7 @@ function dbToRec(row){
     crane: row.crane, labor: row.labor, extraPP: row.extra_pp,
     driverTotal: row.driver_total, helperTotal: row.helper_total,
     tripTotal: row.trip_total,
+    incomplete: row.incomplete||false, incompleteReason: row.incomplete_reason||'',
     tripId: row.trip_id||null,
     gpsOut: row.gps_out||'', gpsArrival: row.gps_arrival||'',
     timeOut: row.time_out||'', timeArrival: row.time_arrival||'',
@@ -2057,6 +2077,7 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
     brickOn, brickQty, brickTotal, brickPP,
     crane, labor, extraPP,
     driverTotal:drvTotal, helperTotal:hlpTotal, tripTotal,
+    incomplete:false, incompleteReason:'',
     tripId: tripMode ? currentTripId : null,
     gpsOut:document.getElementById('fGpsOut').value,
     photosBefore:[...photosBefore],
@@ -2477,7 +2498,26 @@ function openStep2(id){
   photosAfterNew=[];
   renderPhotoGrid('photoAfterStrip',photosAfterNew,'upAfter2');
   document.getElementById('photoAfterCount').style.display='none';
+  // ส่งไม่ครบ — หักค่าเที่ยว 50%
+  window._step2FullTrip = r.incomplete ? (r.tripTotal||0)*2 : (r.tripTotal||0);
+  document.getElementById('step2IncompleteReason').value = r.incompleteReason||'';
+  setIncompleteUI(!!r.incomplete);
   document.getElementById('step2Modal').classList.add('show');
+}
+function setIncompleteUI(on){
+  window._step2Inc = !!on;
+  var t=document.getElementById('incompleteToggle');
+  t.classList.toggle('on', !!on);
+  t.setAttribute('aria-checked', on?'true':'false');
+  document.getElementById('incompleteReasonWrap').style.display = on?'block':'none';
+  updateIncompletePreview();
+}
+function toggleIncomplete(){ setIncompleteUI(!window._step2Inc); }
+function updateIncompletePreview(){
+  var el=document.getElementById('incompletePreview'); if(!el) return;
+  if(!window._step2Inc){ el.textContent=''; return; }
+  var full=window._step2FullTrip||0;
+  el.textContent='💰 ค่าเที่ยว ฿'+Math.round(full)+' → หัก 50% เหลือ ฿'+Math.round(full*0.5);
 }
 function closeStep2(){
   document.getElementById('step2Modal').classList.remove('show');
@@ -2491,6 +2531,20 @@ function saveStep2(){
   if(!gps){ toast('err','กรุณาดึงพิกัดหน้างานก่อน'); return; }
   var idx = records.findIndex(function(r){return r.id===id;});
   if(idx<0){ toast('err','ไม่พบบิลนี้'); return; }
+  // ส่งไม่ครบ — หักค่าเที่ยว 50%
+  var incomplete = !!window._step2Inc;
+  var incReason = document.getElementById('step2IncompleteReason').value.trim();
+  if(incomplete && !incReason){ toast('err','กรุณากรอกเหตุผลที่ส่งไม่ครบ'); return; }
+  var wasInc = !!records[idx].incomplete;
+  var fullTrip = wasInc ? (records[idx].tripTotal||0)*2 : (records[idx].tripTotal||0);
+  var fullDrv  = wasInc ? (records[idx].driverTotal||0)*2 : (records[idx].driverTotal||0);
+  var fullHlp  = wasInc ? (records[idx].helperTotal||0)*2 : (records[idx].helperTotal||0);
+  var incF = incomplete ? 0.5 : 1;
+  records[idx].tripTotal   = fullTrip*incF;
+  records[idx].driverTotal = fullDrv*incF;
+  records[idx].helperTotal = fullHlp*incF;
+  records[idx].incomplete = incomplete;
+  records[idx].incompleteReason = incomplete ? incReason : '';
   var now = new Date();
   records[idx].gpsArrival=gps;
   records[idx].timeArrival=now.toTimeString().slice(0,5);
@@ -2558,6 +2612,7 @@ function renderHistory(){
       +'<span class="badge '+typeBadge+'">'+typeLabel+'</span> '
       +'<span class="badge '+carBadge+'">'+carShort+'</span>'
       +(done?'<span class="badge b-green">✓ ส่งครบ</span>':'<span class="badge b-red">📷 รอส่งรูป</span>')
+      +(r.incomplete?'<span class="badge b-red">🚧 ส่งไม่ครบ</span>':'')
       +(r.brickOn||r.crane||r.labor?'<span class="badge b-amber">⭐พิเศษ</span>':'')
       +(pc?'<span class="badge b-gray">📷'+pc+'</span>':'')
       +'<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
@@ -2608,6 +2663,10 @@ function showDetail(id){
   html += '<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:16px">'
     +'<span style="color:var(--t2)">ค่าเที่ยวรวม</span>'
     +'<strong style="color:var(--green)">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</strong></div>';
+  if(r.incomplete){
+    html += '<div style="background:var(--amber-bg);border:0.5px solid #fac775;border-radius:8px;padding:10px;font-size:13px;color:var(--amber);margin:6px 0">'
+      +'🚧 <strong>ส่งไม่ครบ — หักค่าเที่ยว 50%</strong> (฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+' → ฿'+Math.round(r.tripTotal||0).toLocaleString()+')<br>📝 '+(r.incompleteReason||'-')+'</div>';
+  }
   if(r.brickOn||r.crane||r.labor){
     html += '<div style="background:var(--amber-bg);border-radius:8px;padding:10px;font-size:13px;color:var(--amber);margin:6px 0">⭐ '
       +(r.brickOn?'อิฐ '+r.brickQty+' ก้อน ':'')
@@ -3380,8 +3439,9 @@ function renderReport(){
   var empMap={};
   f.forEach(function(r){
     var nA=1+(r.helpers||[]).length;
+    var incF=(r.incomplete?0.5:1);
     var bPP=(r.brickTotal||0)/nA, ePP=r.extraPP||0;
-    function add(n,base){ if(!empMap[n])empMap[n]={t:0,base:0,bonus:0}; empMap[n].t++; empMap[n].base+=base; empMap[n].bonus+=bPP+ePP; }
+    function add(n,base){ if(!empMap[n])empMap[n]={t:0,base:0,bonus:0}; empMap[n].t++; empMap[n].base+=base*incF; empMap[n].bonus+=(bPP+ePP)*incF; }
     add(r.driver,40); (r.helpers||[]).forEach(function(h){add(h,20);});
   });
   var ea=Object.entries(empMap).sort(function(a,b){return (b[1].base+b[1].bonus)-(a[1].base+a[1].bonus);});
@@ -3501,7 +3561,7 @@ function exportExcel(){
   if(typeof XLSX === 'undefined'){ toast('err','โหลด SheetJS ไม่สำเร็จ ลองใช้ Export CSV แทน'); return; }
 
   // ---- Sheet 1: รายการจัดส่ง ----
-  var headers1 = ['วันที่','เลขบิล','ลูกค้า/ปลายทาง','รถ','คนขับ','ผู้ช่วย','ค่าเที่ยวรวม (฿)','คนขับได้ (฿)','ผู้ช่วยได้ (฿)','อิฐบล็อก (ก้อน)','โบนัสอิฐ (฿)','ใช้เครน','ใช้แรงงาน','เวลาออก','เวลาถึง','GPS ออก','GPS ถึง','ระยะทางคาดการณ์ (กม.)','หมายเหตุ','สถานะ'];
+  var headers1 = ['วันที่','เลขบิล','ลูกค้า/ปลายทาง','รถ','คนขับ','ผู้ช่วย','ค่าเที่ยวรวม (฿)','คนขับได้ (฿)','ผู้ช่วยได้ (฿)','อิฐบล็อก (ก้อน)','โบนัสอิฐ (฿)','ใช้เครน','ใช้แรงงาน','ส่งไม่ครบ','เหตุผลส่งไม่ครบ','เวลาออก','เวลาถึง','GPS ออก','GPS ถึง','ระยะทางคาดการณ์ (กม.)','หมายเหตุ','สถานะ'];
   var rows1 = [headers1];
   data.forEach(function(r){
     var distNum = calcDistance(r.gpsOut, r.gpsArrival);
@@ -3516,6 +3576,8 @@ function exportExcel(){
       r.brickTotal ? parseFloat(r.brickTotal.toFixed(2)) : 0,
       r.crane ? 'ใช่' : '',
       r.labor ? 'ใช่' : '',
+      r.incomplete ? 'ใช่' : '',
+      r.incomplete ? (r.incompleteReason||'') : '',
       r.timeOut||'', r.timeArrival||'',
       r.gpsOut||'', r.gpsArrival||'',
       dist,
