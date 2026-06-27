@@ -777,6 +777,7 @@ textarea{min-height:72px;resize:vertical}
       <input type="month" id="prMonth" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit" onchange="renderPayrollPreview()">
       <div id="prPreview" style="margin-top:12px"></div>
       <button id="prSyncBtn" onclick="confirmSyncTripPay()" style="margin-top:12px;width:100%;padding:12px;border:none;border-radius:9px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer;font-family:inherit;display:none">📤 ส่งข้อเสนอเข้า Payroll</button>
+      <button id="prPrintBtn" onclick="printTripPayReport()" style="margin-top:8px;width:100%;padding:11px;border:1px solid #2d6411;border-radius:9px;background:#fff;color:#2d6411;font-weight:700;cursor:pointer;font-family:inherit;display:none">🖨️ พิมพ์รายงานตรวจสอบ</button>
       <div id="prStatus" style="font-size:12.5px;margin-top:10px;color:#6b6a63;line-height:1.5"></div>
     </div>
   </div>
@@ -2362,14 +2363,15 @@ function initPayrollTab(){
 async function renderPayrollPreview(){
   var box=document.getElementById('prPreview');
   var btn=document.getElementById('prSyncBtn');
+  var pbtn=document.getElementById('prPrintBtn');
   var ym=(document.getElementById('prMonth')||{}).value;
   document.getElementById('prStatus').textContent='';
-  if(!ym){ box.innerHTML=''; btn.style.display='none'; return; }
+  if(!ym){ box.innerHTML=''; btn.style.display='none'; if(pbtn)pbtn.style.display='none'; return; }
   box.innerHTML='<div style="color:#6b6a63;font-size:13px">⏳ กำลังรวมยอด...</div>';
-  try{ await loadPayrollEmployees(); }catch(e){ box.innerHTML='<div style="color:#991c1c;font-size:13px">⚠️ '+e.message+'</div>'; btn.style.display='none'; return; }
+  try{ await loadPayrollEmployees(); }catch(e){ box.innerHTML='<div style="color:#991c1c;font-size:13px">⚠️ '+e.message+'</div>'; btn.style.display='none'; if(pbtn)pbtn.style.display='none'; return; }
   var data=computeTripPay(ym);
   var nicks=Object.keys(data).filter(function(n){return data[n].pay>0;}).sort(function(a,b){return data[b].pay-data[a].pay;});
-  if(!nicks.length){ box.innerHTML='<div style="background:#fff7e6;border-radius:10px;padding:12px;font-size:13px;color:#8a4d00">เดือน '+thMonthLabel(ym)+' ยังไม่มีบิลที่ส่งครบและอนุมัติแล้ว</div>'; btn.style.display='none'; return; }
+  if(!nicks.length){ box.innerHTML='<div style="background:#fff7e6;border-radius:10px;padding:12px;font-size:13px;color:#8a4d00">เดือน '+thMonthLabel(ym)+' ยังไม่มีบิลที่ส่งครบและอนุมัติแล้ว</div>'; btn.style.display='none'; if(pbtn)pbtn.style.display='none'; return; }
   var total=0, unmapped=[];
   var rows=nicks.map(function(nk){
     var o=data[nk]; total+=o.pay;
@@ -2393,6 +2395,69 @@ async function renderPayrollPreview(){
   box.innerHTML='<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:8px"><span>รวม '+nicks.length+' คน · '+thMonthLabel(ym)+'</span><span style="color:#2d6411">฿'+Math.round(total).toLocaleString()+'</span></div>'+warn+rows;
   btn.style.display='block';
   btn.disabled=false; btn.style.opacity='1';
+  if(pbtn) pbtn.style.display='block';
+}
+
+// 🖨️ หน้ารายงานค่าเที่ยวรายคน (สรุป + รายบิล) สำหรับพิมพ์ตรวจสอบ
+function printTripPayReport(){
+  var ym=(document.getElementById('prMonth')||{}).value;
+  if(!ym){ alert('เลือกเดือนก่อน'); return; }
+  // เปิดหน้าต่าง sync ทันทีตอนกด (กัน popup โดนบล็อกบน iOS — ดู iOS popup print fix)
+  var w=window.open('','_blank');
+  var data=computeTripPay(ym);
+  var nicks=Object.keys(data).filter(function(n){return data[n].pay>0;}).sort(function(a,b){return data[b].pay-data[a].pay;});
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  var total=0, totalTrips=0;
+  // ตารางสรุป
+  var sumRows='';
+  nicks.forEach(function(nk,i){
+    var o=data[nk]; total+=o.pay; totalTrips+=o.trips;
+    var emp=prResolveEmp(nk);
+    var fn=emp?esc(emp.full_name||''):'<span style="color:#b91c1c">— ไม่พบในระบบเงินเดือน —</span>';
+    sumRows+='<tr><td class="c">'+(i+1)+'</td><td>'+esc(nk)+'</td><td>'+fn+'</td><td class="c">'+o.trips+'</td><td class="r">'+Math.round(o.pay).toLocaleString()+'</td></tr>';
+  });
+  // รายละเอียดรายบิลต่อคน
+  var detail='';
+  nicks.forEach(function(nk){
+    var o=data[nk]; var emp=prResolveEmp(nk);
+    var lines=o.lines.slice().sort(function(a,b){return a.date.localeCompare(b.date);});
+    var lr='';
+    lines.forEach(function(l){
+      var d=l.date.slice(8,10)+'/'+l.date.slice(5,7)+'/'+(parseInt(l.date.slice(0,4),10)+543);
+      lr+='<tr><td class="c">'+d+'</td><td>'+esc(l.bill)+'</td><td class="c">'+esc(l.role)+'</td><td class="r">'+Math.round(l.amt).toLocaleString()+'</td></tr>';
+    });
+    detail+='<div class="person"><div class="ph">'+esc(nk)+(emp&&emp.full_name?' — '+esc(emp.full_name):'')+' · '+o.trips+' เที่ยว · รวม ฿'+Math.round(o.pay).toLocaleString()+'</div>'
+      +'<table class="tb"><thead><tr><th>วันที่</th><th>เลขบิล</th><th>หน้าที่</th><th class="r">ค่าเที่ยว (฿)</th></tr></thead><tbody>'+lr+'</tbody></table></div>';
+  });
+  var now=new Date();
+  var nowStr=now.getDate()+'/'+(now.getMonth()+1)+'/'+(now.getFullYear()+543)+' '+('0'+now.getHours()).slice(-2)+':'+('0'+now.getMinutes()).slice(-2);
+  var html='<!doctype html><html lang="th"><head><meta charset="utf-8"><title>รายงานค่าเที่ยว '+esc(thMonthLabel(ym))+'</title>'
+    +'<style>'
+    +'*{box-sizing:border-box}body{font-family:-apple-system,"Sarabun","Segoe UI",sans-serif;color:#1a1a1a;margin:24px;font-size:13px}'
+    +'h1{font-size:18px;margin:0 0 2px}.sub{color:#555;font-size:12px;margin-bottom:14px}'
+    +'table{border-collapse:collapse;width:100%;margin-bottom:6px}'
+    +'th,td{border:1px solid #bbb;padding:6px 8px;font-size:12.5px}th{background:#eef3ea;text-align:left}'
+    +'.c{text-align:center}.r{text-align:right;font-variant-numeric:tabular-nums}'
+    +'.tot{font-weight:700;background:#f3f7ef}'
+    +'.person{margin-top:14px;break-inside:avoid}.ph{font-weight:700;background:#2d6411;color:#fff;padding:6px 8px;border-radius:5px 5px 0 0;font-size:12.5px}'
+    +'.tb th{background:#f3f4f0}'
+    +'.sign{margin-top:30px;display:flex;gap:40px;font-size:12px;color:#333}.sign div{flex:1;text-align:center}.sign .ln{margin-top:34px;border-top:1px dotted #555;padding-top:4px}'
+    +'.note{margin-top:10px;font-size:11px;color:#777}'
+    +'@media print{body{margin:12mm}button{display:none}}'
+    +'</style></head><body>'
+    +'<button onclick="window.print()" style="float:right;padding:8px 16px;border:none;border-radius:6px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer">🖨️ พิมพ์</button>'
+    +'<h1>รายงานค่าเที่ยวพนักงาน — กิจมั่งมีโฮม</h1>'
+    +'<div class="sub">งวดเดือน '+esc(thMonthLabel(ym))+' · เฉพาะบิลที่ส่งครบและอนุมัติแล้ว · พิมพ์เมื่อ '+esc(nowStr)+'</div>'
+    +'<table><thead><tr><th class="c">#</th><th>ชื่อเล่น</th><th>ชื่อ-สกุล</th><th class="c">จำนวนเที่ยว</th><th class="r">ยอดรวม (฿)</th></tr></thead>'
+    +'<tbody>'+sumRows+'</tbody>'
+    +'<tfoot><tr class="tot"><td class="c" colspan="3">รวมทั้งสิ้น '+nicks.length+' คน</td><td class="c">'+totalTrips+'</td><td class="r">'+Math.round(total).toLocaleString()+'</td></tr></tfoot></table>'
+    +'<div class="note">* ยอดนี้เป็นค่าเที่ยวที่คำนวณจากระบบจัดส่ง ใช้สำหรับตรวจสอบ/ส่งให้ฝ่ายเงินเดือน</div>'
+    +'<h2 style="font-size:15px;margin:22px 0 4px">รายละเอียดรายบิล</h2>'
+    +detail
+    +'<div class="sign"><div><div class="ln">ผู้จัดทำ</div></div><div><div class="ln">ผู้ตรวจสอบ</div></div><div><div class="ln">ผู้อนุมัติ</div></div></div>'
+    +'</body></html>';
+  if(!w){ alert('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต popup แล้วลองอีกครั้ง'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
 }
 function confirmSyncTripPay(){
   var ym=(document.getElementById('prMonth')||{}).value;
