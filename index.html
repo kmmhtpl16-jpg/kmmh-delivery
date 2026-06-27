@@ -1878,26 +1878,35 @@ function compressImage(file, callback){
 
 // ==================== PHOTOS ====================
 // Upload photo to Supabase Storage, return URL or null
+function _sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
 async function uploadPhotoToStorage(base64, filename){
   if(!db) return null;
+  var blob, path, uploadUrl2;
   try{
     // Convert base64 to blob
     var arr = base64.split(','), mime = arr[0].match(/:(.*?);/)[1];
     var bstr = atob(arr[1]), n = bstr.length;
     var u8arr = new Uint8Array(n);
     while(n--){ u8arr[n] = bstr.charCodeAt(n); }
-    var blob = new Blob([u8arr], {type: mime});
-    var path = filename+'_'+Date.now()+'.jpg';
-    var uploadUrl2 = SUPABASE_URL+'/storage/v1/object/delivery-photos/'+path;
-    var res2 = await fetch(uploadUrl2,{method:'POST',
-      headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'image/jpeg','x-upsert':'true'},
-      body:blob});
-    if(!res2.ok) throw new Error('upload2 '+res2.status);
-    return SUPABASE_URL+'/storage/v1/object/public/delivery-photos/'+path;
-  }catch(e){
-    console.warn('Upload photo failed:', e.message);
-    return null; // fallback: keep base64 locally
+    blob = new Blob([u8arr], {type: mime});
+    path = filename+'_'+Date.now()+'.jpg';
+    uploadUrl2 = SUPABASE_URL+'/storage/v1/object/delivery-photos/'+path;
+  }catch(e){ console.warn('Photo decode failed:', e.message); return null; }
+  // 🔁 ลองอัปซ้ำสูงสุด 3 ครั้ง (กันเน็ตหลุดชั่วคราว) — ใช้ path เดิม + x-upsert กันไฟล์ซ้ำ
+  for(var attempt=1; attempt<=3; attempt++){
+    try{
+      var res2 = await fetch(uploadUrl2,{method:'POST',
+        headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'image/jpeg','x-upsert':'true'},
+        body:blob});
+      if(!res2.ok) throw new Error('upload2 '+res2.status);
+      return SUPABASE_URL+'/storage/v1/object/public/delivery-photos/'+path;
+    }catch(e){
+      console.warn('Upload photo attempt '+attempt+'/3 failed:', e.message);
+      if(attempt<3) await _sleep(attempt*1500); // หน่วง 1.5s แล้ว 3s ก่อนลองใหม่
+    }
   }
+  return null; // ครบ 3 ครั้งยังไม่ขึ้น → คงไว้เป็น base64 ในเครื่อง (checkPhotoUpload จะเตือน + auto-sync ตามมา)
 }
 
 // Upload array of base64 photos, return array of URLs (or base64 if offline)
@@ -1926,7 +1935,12 @@ function checkPhotoUpload(label, sentCount, urls, rec){
   if(bad>0){
     var bill = (rec&&rec.bill) || '';
     if(typeof toast==='function') toast('err','⚠️ รูป'+label+'ขึ้นเซิร์ฟเวอร์ไม่ครบ '+bad+' รูป — กดปุ่มซิงค์อีกครั้ง หรือถ่ายซ่อม (บิล '+bill+')');
-    try{ sendTelegramDeliv('⚠️ <b>รูปอัปโหลดไม่ครบ</b>\nบิล '+bill+' — รูป'+label+' ขึ้นเซิร์ฟเวอร์ไม่ครบ '+bad+' รูป\nคนขับ: '+((rec&&rec.driver)||'-')+'\nโปรดให้พนักงานกดซิงค์ใหม่ หรือถ่ายซ่อม'); }catch(e){}
+    try{ sendTelegramDeliv('⚠️ <b>รูปอัปโหลดไม่ครบ</b>\nบิล '+bill+' — รูป'+label+' ขึ้นเซิร์ฟเวอร์ไม่ครบ '+bad+' รูป\nคนขับ: '+((rec&&rec.driver)||'-')+'\nกำลังลองอัปซ้ำอัตโนมัติ — ถ้ายังไม่ขึ้น กรุณากดซิงค์/ถ่ายซ่อม'); }catch(e){}
+    // 🔁 ลองอัปซ้ำอัตโนมัติเมื่อเน็ตกลับมา (รูปยังค้าง base64 ในเครื่อง) — 20 วิ แล้ว 90 วิ
+    if(typeof syncPendingPhotos==='function'){
+      setTimeout(function(){ syncPendingPhotos(); }, 20000);
+      setTimeout(function(){ syncPendingPhotos(); }, 90000);
+    }
   }
   return bad;
 }
