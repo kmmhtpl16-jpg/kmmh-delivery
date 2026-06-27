@@ -1916,6 +1916,21 @@ async function uploadPhotos(arr, prefix){
   return results;
 }
 
+// ⚠️ เตือนเมื่อรูปอัปขึ้นเซิร์ฟเวอร์ไม่ครบ (เน็ตหลุด/รูปใหญ่) — กันรูปหายเงียบแบบเคส KM6906-1287
+function checkPhotoUpload(label, sentCount, urls, rec){
+  var arr = urls || [];
+  // url ที่ยังเป็น base64 (data:) หรือ null = อัปไม่สำเร็จ จะถูกตัดทิ้งตอนเซฟขึ้นคลาวด์
+  var failed = arr.filter(function(u){ return !u || (typeof u==='string' && u.indexOf('data:')===0); }).length;
+  var missing = Math.max(0, (sentCount||0) - arr.length);
+  var bad = failed + missing;
+  if(bad>0){
+    var bill = (rec&&rec.bill) || '';
+    if(typeof toast==='function') toast('err','⚠️ รูป'+label+'ขึ้นเซิร์ฟเวอร์ไม่ครบ '+bad+' รูป — กดปุ่มซิงค์อีกครั้ง หรือถ่ายซ่อม (บิล '+bill+')');
+    try{ sendTelegramDeliv('⚠️ <b>รูปอัปโหลดไม่ครบ</b>\nบิล '+bill+' — รูป'+label+' ขึ้นเซิร์ฟเวอร์ไม่ครบ '+bad+' รูป\nคนขับ: '+((rec&&rec.driver)||'-')+'\nโปรดให้พนักงานกดซิงค์ใหม่ หรือถ่ายซ่อม'); }catch(e){}
+  }
+  return bad;
+}
+
 // Sync pending base64 photos to storage (called on syncAll)
 async function syncPendingPhotos(){
   if(!db) return;
@@ -2154,9 +2169,11 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   }
   saveToCloud(rec);
   commitQueueBooking(rec.bill); // คอมมิตบิลในคิวจอง -> กำลังส่ง หลังบันทึก Step1 สำเร็จ
+  var _nBefore = rec.photosBefore.length;
   uploadPhotos(rec.photosBefore, 'before_'+rec.id).then(function(urls){
     var idx = records.findIndex(function(r){return r.id===rec.id;});
     if(idx>=0){ records[idx].photosBefore = urls; save(); saveToCloud(records[idx]); }
+    checkPhotoUpload('ก่อนออกรถ', _nBefore, urls, rec);
   });
   localStorage.removeItem(DRAFT_KEY);
   updateTodaySub(); updatePendingBadge();
@@ -2813,6 +2830,8 @@ function saveStep2(){
   var recIdx = idx;
   var recId = records[idx].id;
   // Upload after photos
+  var _nAfter = photosAfterNew.length;
+  var _recAfter = records[recIdx];
   uploadPhotos([...photosAfterNew], 'after_'+recId).then(function(urls){
     var i = records.findIndex(function(r){return r.id===recId;});
     if(i>=0){
@@ -2820,6 +2839,7 @@ function saveStep2(){
       save();
       saveToCloud(records[i]);
     }
+    checkPhotoUpload('หลังส่งของ', _nAfter, urls, _recAfter);
   });
   records[idx].photosAfter=[...photosAfterNew]; // local base64 first
   save();
