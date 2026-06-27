@@ -770,12 +770,13 @@ textarea{min-height:72px;resize:vertical}
       <div class="card-title">💵 ส่งค่าเที่ยวเข้าโปรแกรมเงินเดือน (Payroll)</div>
       <div style="font-size:12.5px;color:#6b6a63;margin-bottom:10px;line-height:1.5">
         รวมค่าเที่ยวของ <b>คนขับ + ผู้ช่วย</b> จากบิลที่ <b>ส่งครบและอนุมัติแล้ว</b> ในเดือนที่เลือก
-        แล้วลงเป็นรายได้พิเศษ (รายการเดียวต่อคน) ในงวดเงินเดือนเดือนนั้น · จ่ายสิ้นเดือน
+        แล้วส่งเป็น <b>ข้อเสนอ</b> ไปยังโปรแกรมเงินเดือน — <u>ไม่ลงยอดจริงให้อัตโนมัติ</u>
+        ฝ่ายเงินเดือนจะเห็นแถบเตือนยอดนี้เพื่อตรวจสอบก่อนกรอกเอง
       </div>
       <label style="display:block;font-size:13px;color:#6b6a63;margin:4px 0 4px">เลือกเดือน (พ.ศ.)</label>
       <input type="month" id="prMonth" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit" onchange="renderPayrollPreview()">
       <div id="prPreview" style="margin-top:12px"></div>
-      <button id="prSyncBtn" onclick="confirmSyncTripPay()" style="margin-top:12px;width:100%;padding:12px;border:none;border-radius:9px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer;font-family:inherit;display:none">📤 ส่งยอดเข้า Payroll</button>
+      <button id="prSyncBtn" onclick="confirmSyncTripPay()" style="margin-top:12px;width:100%;padding:12px;border:none;border-radius:9px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer;font-family:inherit;display:none">📤 ส่งข้อเสนอเข้า Payroll</button>
       <div id="prStatus" style="font-size:12.5px;margin-top:10px;color:#6b6a63;line-height:1.5"></div>
     </div>
   </div>
@@ -2396,15 +2397,15 @@ async function renderPayrollPreview(){
 function confirmSyncTripPay(){
   var ym=(document.getElementById('prMonth')||{}).value;
   if(!ym) return;
-  if(currentRole!=='admin' && currentRole!=='owner'){ alert('ต้องเป็นแอดมินหรือเจ้าของจึงจะส่งเข้า Payroll ได้'); return; }
-  if(!confirm('ยืนยันส่งค่าเที่ยวเดือน '+thMonthLabel(ym)+' เข้าโปรแกรมเงินเดือน?\n\nระบบจะแทนที่ยอดค่าเที่ยวเดิมของเดือนนี้ (ถ้ามี) ด้วยยอดที่คำนวณใหม่')) return;
+  if(currentRole!=='admin' && currentRole!=='owner'){ alert('ต้องเป็นแอดมินหรือเจ้าของจึงจะส่งข้อเสนอได้'); return; }
+  if(!confirm('ส่งข้อเสนอค่าเที่ยวเดือน '+thMonthLabel(ym)+' ไปยังโปรแกรมเงินเดือน?\n\nเป็นแค่ข้อเสนอให้ฝ่ายเงินเดือนตรวจสอบ — ไม่ลงยอดจริงให้อัตโนมัติ')) return;
   syncTripPayToPayroll(ym);
 }
 async function syncTripPayToPayroll(ym){
   var st=document.getElementById('prStatus');
   var btn=document.getElementById('prSyncBtn');
   if(!db){ st.innerHTML='<span style="color:#991c1c">⚠️ ยังไม่เชื่อมฐานข้อมูล</span>'; return; }
-  btn.disabled=true; btn.style.opacity='.5'; st.style.color='#6b6a63'; st.textContent='⏳ กำลังส่ง...';
+  btn.disabled=true; btn.style.opacity='.5'; st.style.color='#6b6a63'; st.textContent='⏳ กำลังส่งข้อเสนอ...';
   try{
     var Y=parseInt(ym.slice(0,4),10), M=parseInt(ym.slice(5,7),10);
     var pr=await db.from('pay_periods').select('id').eq('year',Y).eq('month',M).maybeSingle();
@@ -2413,37 +2414,31 @@ async function syncTripPayToPayroll(ym){
     var periodId=pr.data.id;
     await loadPayrollEmployees(true);
     var data=computeTripPay(ym);
-    // รายการค่าเที่ยวเดิมของงวดนี้
-    var ex=await db.from('extra_income_entries').select('id,employee_id,is_overridden').eq('period_id',periodId).eq('income_type','other').ilike('label','ค่าเที่ยว%');
-    if(ex.error) throw new Error(ex.error.message);
-    var existMap={}; (ex.data||[]).forEach(function(e){ if(!existMap[e.employee_id]) existMap[e.employee_id]=e; });
     var nowISO=new Date().toISOString();
-    var toInsert=[], toUpdate=[], unmapped=[], skipped=[];
+    // เขียนลง "ตารางข้อเสนอ" trip_pay_proposals (ไม่แตะยอดจ่ายจริง extra_income_entries)
+    var rows=[], unmapped=[], keepIds=[];
     Object.keys(data).forEach(function(nk){
       var o=data[nk]; if(o.pay<=0) return;
       var emp=prResolveEmp(nk);
       if(!emp){ unmapped.push(nk); return; }
-      var note=o.trips+' เที่ยว';
-      var cur=existMap[emp.id];
-      if(!cur){
-        toInsert.push({ employee_id:emp.id, period_id:periodId, income_type:'other', label:PR_LABEL, amount:Math.round(o.pay*100)/100, amount_note:note, disburse_on:'month_end', cycle_id:null, is_overridden:false, created_by:null, updated_at:nowISO });
-      } else if(!cur.is_overridden){
-        toUpdate.push({ id:cur.id, amount:Math.round(o.pay*100)/100, note:note });
-      } else { skipped.push(nk); }
-      if(cur) delete existMap[emp.id];
+      keepIds.push(emp.id);
+      rows.push({ employee_id:emp.id, period_id:periodId, ym:ym, nickname:emp.nickname||nk, full_name:emp.full_name||null,
+        amount:Math.round(o.pay*100)/100, trips:o.trips,
+        detail:{ lines:o.lines.slice().sort(function(a,b){return a.date.localeCompare(b.date);}) },
+        status:'pending', source:'delivery', updated_at:nowISO });
     });
-    // รายการเดิมที่เหลือ (คนที่เดือนนี้ไม่มีค่าเที่ยวแล้ว) — ลบถ้าไม่ถูกล็อก
-    var toDelete=Object.keys(existMap).map(function(k){return existMap[k];}).filter(function(e){return !e.is_overridden;}).map(function(e){return e.id;});
+    // ลบข้อเสนอเก่าของงวดนี้ที่เดือนนี้ไม่มีค่าเที่ยวแล้ว (คนที่อยู่ใน keepIds จะถูก upsert ทับ)
+    var exist=await db.from('trip_pay_proposals').select('id,employee_id').eq('period_id',periodId).eq('source','delivery');
+    if(exist.error) throw new Error(exist.error.message);
+    var staleIds=(exist.data||[]).filter(function(e){return keepIds.indexOf(e.employee_id)<0;}).map(function(e){return e.id;});
+    if(staleIds.length){ var rd=await db.from('trip_pay_proposals').delete().in('id',staleIds); if(rd.error) throw new Error('ลบข้อเสนอเก่า: '+rd.error.message); }
+    if(rows.length){ var ru=await db.from('trip_pay_proposals').upsert(rows,{onConflict:'employee_id,period_id'}); if(ru.error) throw new Error('ส่งข้อเสนอ: '+ru.error.message); }
 
-    if(toInsert.length){ var ri=await db.from('extra_income_entries').insert(toInsert); if(ri.error) throw new Error('insert: '+ri.error.message); }
-    for(var i=0;i<toUpdate.length;i++){ var u=toUpdate[i]; var ru=await db.from('extra_income_entries').update({label:PR_LABEL,amount:u.amount,amount_note:u.note,updated_at:nowISO}).eq('id',u.id); if(ru.error) throw new Error('update: '+ru.error.message); }
-    if(toDelete.length){ var rd=await db.from('extra_income_entries').delete().in('id',toDelete); if(rd.error) throw new Error('delete: '+rd.error.message); }
-
-    var msg='✅ ส่งเข้า Payroll สำเร็จ — เพิ่ม '+toInsert.length+' · อัปเดต '+toUpdate.length+' · ลบ '+toDelete.length+' รายการ';
-    if(skipped.length) msg+='<br>🔒 ข้าม (ถูกแก้มือในเงินเดือน): '+skipped.join(', ');
+    var msg='✅ ส่งข้อเสนอเข้า Payroll แล้ว '+rows.length+' คน — ฝ่ายเงินเดือนจะเห็นแถบเตือนให้ตรวจสอบก่อนกรอกยอดจริง';
+    if(staleIds.length) msg+='<br>🗑 ลบข้อเสนอเก่าที่ไม่มีเที่ยวแล้ว '+staleIds.length+' รายการ';
     if(unmapped.length) msg+='<br>⚠️ ไม่ได้ส่ง (ไม่พบในเงินเดือน): '+unmapped.join(', ');
     st.style.color='#2d6411'; st.innerHTML=msg;
-    try{ if(typeof toast==='function') toast('ok','ส่งค่าเที่ยวเข้า Payroll แล้ว'); }catch(e){}
+    try{ if(typeof toast==='function') toast('ok','ส่งข้อเสนอค่าเที่ยวเข้า Payroll แล้ว'); }catch(e){}
   }catch(e){
     st.style.color='#991c1c'; st.innerHTML='⚠️ ผิดพลาด: '+(e.message||e);
   }
