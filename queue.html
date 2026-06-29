@@ -574,10 +574,40 @@ function resetAll(){
   var sb=document.getElementById('fStoreBtn'); sb.classList.remove('has'); sb.textContent='🏠 ปักหมุดที่ตั้งร้าน';
   alert('ล้างข้อมูลแล้ว'); renderQueue();
 }
-(function(){
+var LOGIN_URL = SB_URL + '/functions/v1/login';
+var DELIV_PIN = '2546';
+async function mintSession(pin){
+  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
+  for(var attempt=0; attempt<3; attempt++){
+    var res;
+    try{
+      res = await fetch(LOGIN_URL,{ method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY }, body: JSON.stringify({ pin:pin }) });
+    }catch(e){ if(attempt<2){ await sleep(400); continue; } return 'network'; }
+    if(res.status===401){ return 'invalid_pin'; }
+    var j = await res.json().catch(function(){ return {}; });
+    if(res.ok && j.access_token){
+      var r = await db.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token });
+      if(!r.error) return null;
+      if(attempt<2){ await sleep(400); continue; }
+      return 'session_error';
+    }
+    if(attempt<2){ await sleep(400); continue; }
+    return j.error || ('error_'+res.status);
+  }
+  return 'error';
+}
+async function ensureSession(){
+  initDB();
+  if(!db) return false;
+  try{ var s = await db.auth.getSession(); if(s && s.data && s.data.session) return true; }catch(e){}
+  var err = await mintSession(DELIV_PIN);
+  if(err) console.warn('auto-login:', err);
+  return !err;
+}
+(async function(){
   document.getElementById('fThreshold').value=state.threshold||2;
   if(state.store){ var sb=document.getElementById('fStoreBtn'); sb.classList.add('has'); sb.textContent='🏠 ตั้งจุดร้านแล้ว ('+state.store.lat.toFixed(4)+', '+state.store.lng.toFixed(4)+')'; }
-  initDB();
+  await ensureSession();
   renderQueue();
   loadCloud();
   loadConfig();

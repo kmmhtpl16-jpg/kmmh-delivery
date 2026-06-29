@@ -1453,8 +1453,38 @@ function showPage(p){
 }
 
 // ==================== INIT ====================
-(async function(){
+// ล็อกอินเงียบอัตโนมัติ: พนักงานไม่ต้องพิมพ์รหัส — มี session ให้ RLS authenticated ทำงาน
+const LOGIN_URL = SUPABASE_URL + '/functions/v1/login';
+const DELIV_PIN = '2546';
+async function mintSession(pin){
+  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
+  for(var attempt=0; attempt<3; attempt++){
+    var res;
+    try{
+      res = await fetch(LOGIN_URL,{ method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }, body: JSON.stringify({ pin:pin }) });
+    }catch(e){ if(attempt<2){ await sleep(400); continue; } return 'network'; }
+    if(res.status===401){ return 'invalid_pin'; }
+    var j = await res.json().catch(function(){ return {}; });
+    if(res.ok && j.access_token){
+      var r = await db.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token });
+      if(!r.error) return null;
+      if(attempt<2){ await sleep(400); continue; }
+      return 'session_error';
+    }
+    if(attempt<2){ await sleep(400); continue; }
+    return j.error || ('error_'+res.status);
+  }
+  return 'error';
+}
+async function ensureSession(){
   initSupabase();
+  if(!db) return false;
+  try{ var s = await db.auth.getSession(); if(s && s.data && s.data.session) return true; }catch(e){}
+  var err = await mintSession(DELIV_PIN);
+  if(err) console.warn('auto-login:', err);
+  return !err;
+}
+async function startApp(){
   await load(); // load from Supabase (or localStorage fallback)
   setTodayDisplay();
   updateTodaySub();
@@ -1470,6 +1500,10 @@ function showPage(p){
     var n = records.length;
     if(n > 0) toast('ok','📂 พร้อมใช้งาน '+n+' บิล (กำลังอัปเดตล่าสุด…)');
   }
+}
+(async function(){
+  await ensureSession();
+  await startApp();
 })();
 
 function setTodayDisplay(){
@@ -1896,10 +1930,8 @@ async function uploadPhotoToStorage(base64, filename){
   // 🔁 ลองอัปซ้ำสูงสุด 3 ครั้ง (กันเน็ตหลุดชั่วคราว) — ใช้ path เดิม + x-upsert กันไฟล์ซ้ำ
   for(var attempt=1; attempt<=3; attempt++){
     try{
-      var res2 = await fetch(uploadUrl2,{method:'POST',
-        headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'image/jpeg','x-upsert':'true'},
-        body:blob});
-      if(!res2.ok) throw new Error('upload2 '+res2.status);
+      var up2 = await db.storage.from('delivery-photos').upload(path, blob, {upsert:true, contentType:'image/jpeg'});
+      if(up2.error) throw new Error(up2.error.message||'upload2');
       return SUPABASE_URL+'/storage/v1/object/public/delivery-photos/'+path;
     }catch(e){
       console.warn('Upload photo attempt '+attempt+'/3 failed:', e.message);
