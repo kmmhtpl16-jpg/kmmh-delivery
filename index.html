@@ -2621,6 +2621,23 @@ async function syncTripPayToPayroll(ym, selNicks, isFull){
     if(staleIds.length) msg+='<br>🗑 ลบข้อเสนอเก่าที่ไม่มีเที่ยวแล้ว '+staleIds.length+' รายการ';
     if(unmapped.length) msg+='<br>⚠️ ไม่ได้ส่ง (ไม่พบในเงินเดือน): '+unmapped.join(', ');
     st.style.color='#2d6411'; st.innerHTML=msg;
+    // แจ้งเตือน Telegram (กลุ่มสรุปหลังบ้าน) ว่าแอดมินส่งยอดค่าเที่ยวแล้ว
+    if(rows.length){ try{
+      var _esc=function(t){return String(t==null?'':t).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});};
+      var roleLabel=(currentRole==='owner')?'เจ้าของ':(currentRole==='admin'?'แอดมิน':(currentRole||'-'));
+      var totalSent=rows.reduce(function(a,r){return a+(+r.amount||0);},0);
+      var tgLines=rows.slice().sort(function(a,b){return b.amount-a.amount;}).map(function(r){
+        return '• '+_esc(r.nickname)+' ฿'+Math.round(r.amount).toLocaleString()+' ('+r.trips+' เที่ยว)';
+      }).join('\n');
+      var tgMsg='💵 <b>ส่งยอดค่าเที่ยวเข้า Payroll แล้ว</b>\n'
+        +'งวด '+_esc(thMonthLabel(ym))+' · รอบ '+tripThDate(rg.start)+'–'+tripThDate(rg.end)+'\n'
+        +'ส่งโดย: '+_esc(roleLabel)+'\n'
+        +'จำนวน '+rows.length+' คน · รวม ฿'+Math.round(totalSent).toLocaleString()+'\n'
+        +tgLines;
+      if(!isFull) tgMsg+='\n\n📌 ส่งเฉพาะบางคนที่เลือก (ไม่แตะยอดคนอื่น)';
+      if(unmapped.length) tgMsg+='\n⚠️ ไม่ได้ส่ง (ไม่พบในเงินเดือน): '+_esc(unmapped.join(', '));
+      sendTelegram(tgMsg);
+    }catch(e){ console.warn('tg trippay notify failed', e.message); } }
     try{ if(typeof toast==='function') toast('ok','ส่งยอดค่าเที่ยวเข้า Payroll แล้ว'); }catch(e){}
   }catch(e){
     st.style.color='#991c1c'; st.innerHTML='⚠️ ผิดพลาด: '+(e.message||e);
