@@ -2464,7 +2464,7 @@ async function renderPayrollPreview(){
     }).join('');
     return '<div style="border:0.5px solid #e7e5df;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
-        +'<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer"><input type="checkbox" class="prChk" data-i="'+i+'" checked onchange="prToggleSel(this)" style="width:17px;height:17px;margin-top:2px;flex:none"><span><span style="font-weight:700;font-size:14px">'+nk+'</span><div style="font-size:12px;margin-top:2px">'+who+'</div></span></label>'
+        +'<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer"><input type="checkbox" class="prChk" data-i="'+i+'" checked onchange="prToggleSel(this)" style="width:19px;height:19px;margin-top:2px;flex:none;-webkit-appearance:checkbox;appearance:auto;accent-color:#2d6411;border-radius:3px;padding:0"><span><span style="font-weight:700;font-size:14px">'+nk+'</span><div style="font-size:12px;margin-top:2px">'+who+'</div></span></label>'
         +'<div style="text-align:right"><div style="font-weight:800;color:#2d6411;font-size:15px">฿'+Math.round(o.pay).toLocaleString()+'</div><div style="font-size:11.5px;color:#9b9a92">'+o.trips+' เที่ยว</div></div>'
       +'</div>'
       +'<button onclick="var x=document.getElementById(\''+detId+'\');x.style.display=x.style.display===\'none\'?\'block\':\'none\'" style="margin-top:8px;font-size:11.5px;color:#3056d3;background:none;border:none;padding:0;cursor:pointer">📋 ดู/ซ่อนรายบิล</button>'
