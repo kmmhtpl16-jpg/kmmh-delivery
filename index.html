@@ -2371,11 +2371,16 @@ function thMonthLabel(ym){
   return thM[M]+' '+(Y+543);
 }
 // ===== ค่าเที่ยว→Payroll: รอบตัดยอด 26 เดือนก่อน - 25 เดือนนี้ (จ่ายสิ้นเดือน ym) =====
+// ระบบเริ่มใช้รอบตัดยอด 26-25 ตั้งแต่ มิ.ย.69 — ค่าเที่ยว 26-31 พ.ค.69 จ่ายครบในงวด พ.ค. แล้ว
+// จึง "ล็อกพื้น" ไม่ให้รอบดึงวันก่อน 1 มิ.ย.69 → งวดแรก = 1-25 มิ.ย.; งวดถัดไปกลับเป็น 26-25 ปกติ (เศษ 26-30 มิ.ย. ไปโผล่ต้นงวด ก.ค.)
+var TRIP_PAY_FLOOR='2026-06-01';
 function tripCycleRange(ym){
   var Y=parseInt(ym.slice(0,4),10), M=parseInt(ym.slice(5,7),10);
   var pm=M-1, py=Y; if(pm<1){pm=12; py--;}
   var p2=function(n){return ('0'+n).slice(-2);};
-  return { start: py+'-'+p2(pm)+'-26', end: Y+'-'+p2(M)+'-25',
+  var start=py+'-'+p2(pm)+'-26';
+  if(TRIP_PAY_FLOOR && start<TRIP_PAY_FLOOR) start=TRIP_PAY_FLOOR;
+  return { start: start, end: Y+'-'+p2(M)+'-25',
            carryStart: Y+'-'+p2(M)+'-26', carryEnd: Y+'-'+p2(M)+'-31' };
 }
 function tripThDate(d){ return d.slice(8,10)+'/'+d.slice(5,7)+'/'+(parseInt(d.slice(0,4),10)+543); }
