@@ -3086,6 +3086,48 @@ function showMoreHist(){ histShown += histStep(); renderHistory(); }
 function setHF(m){ histFilter=m; histShown=HIST_PAGE; renderHistory(); }
 
 // ==================== DETAIL (NO NESTED BACKTICKS - FIX #1) ====================
+// ➕ แอดมินเพิ่มรูปเข้าบิลย้อนหลัง (เคสรูปอัปไม่ครบ) — อัปเข้า storage ชื่อ before_/after_ ให้ trigger ลิงก์เข้าบิลอัตโนมัติ
+function _compressForUpload(file, cb){
+  var reader=new FileReader();
+  reader.onload=function(e){ var img=new Image(); img.onload=function(){
+    var MAX=1600,w=img.width,h=img.height;
+    if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} else if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
+    var c=document.createElement('canvas'); c.width=w;c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    var out=c.toDataURL('image/jpeg',0.8),q=0.8;
+    while(out.length>700000&&q>0.5){q-=0.12;out=c.toDataURL('image/jpeg',q);}
+    cb(out);
+  }; img.src=e.target.result; }; reader.readAsDataURL(file);
+}
+async function adminAddPhotos(id, kind){
+  if(currentRole!=='admin'&&currentRole!=='owner'){ toast('err','เฉพาะแอดมิน/เจ้าของเพิ่มรูปได้'); return; }
+  var r=records.find(function(x){return x.id===id;}); if(!r) return;
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.multiple=true;
+  inp.onchange=function(){
+    var files=Array.prototype.slice.call(inp.files||[]); if(!files.length) return;
+    toast('ok','⬆️ กำลังเพิ่มรูป '+files.length+' รูป...');
+    if(kind==='after'){ r.photosAfter=r.photosAfter||[]; } else { r.photosBefore=r.photosBefore||[]; }
+    var arr = kind==='after'? r.photosAfter : r.photosBefore;
+    var idxBase = 100 + arr.length;
+    var remaining = files.length, anyFail=false;
+    files.forEach(function(f, fi){
+      _compressForUpload(f, async function(dataUrl){
+        var url = await uploadPhotoToStorage(dataUrl, (kind==='after'?'after_':'before_')+id+'_'+(idxBase+fi));
+        if(url) arr.push(url); else { arr.push(dataUrl); anyFail=true; }
+        remaining--;
+        if(remaining===0){
+          save();
+          try{ await saveToCloud(r); }catch(e){}
+          try{ await refreshFromCloud(); }catch(e){}
+          toast(anyFail?'err':'ok', anyFail?'⚠️ บางรูปยังไม่ขึ้น จะลองอัปซ้ำอัตโนมัติ':'✅ เพิ่มรูปเรียบร้อย');
+          if(anyFail && typeof syncPendingPhotos==='function'){ setTimeout(function(){ syncPendingPhotos(); },15000); }
+          showDetail(id);
+        }
+      });
+    });
+  };
+  inp.click();
+}
 function showDetail(id){
   var r = records.find(function(x){return x.id===id;});
   if(!r) return;
@@ -3165,7 +3207,8 @@ function showDetail(id){
   }
   // Show edit button for admin/owner
   if(currentRole==='admin'||currentRole==='owner'){
-    html += '<button class="btn btn-ghost" style="margin-top:12px;margin-bottom:6px" onclick="openEditModal('+r.id+');closeDetail()">✏️ แก้ไขข้อมูลบิล</button>';
+    html += '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-ghost" style="flex:1;color:var(--blue)" onclick="adminAddPhotos('+r.id+',\'before\')">➕ เพิ่มรูปก่อน</button><button class="btn btn-ghost" style="flex:1;color:var(--blue)" onclick="adminAddPhotos('+r.id+',\'after\')">➕ เพิ่มรูปหลัง</button></div>';
+    html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px" onclick="openEditModal('+r.id+');closeDetail()">✏️ แก้ไขข้อมูลบิล</button>';
   }
   html += '<div style="display:flex;gap:10px;margin-top:8px">'
     +'<button class="btn btn-secondary" onclick="closeDetail()">ปิด</button>'
