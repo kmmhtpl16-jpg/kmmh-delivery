@@ -1135,7 +1135,7 @@ function sendMonthlySummary(ym){
 }
 var _monthlySchedStarted=false;
 function scheduleMonthlySummary(){
-  if(_monthlySchedStarted) return; _monthlySchedStarted=true;
+  return; /* ย้ายไป Supabase cron delivery-monthly-summary 1 ก.ค.69 กันเด้งซ้ำ/ยิงผิดเดือน */ if(_monthlySchedStarted) return; _monthlySchedStarted=true;
   function nextRun(){ var n=new Date(); var d=new Date(n.getFullYear(), n.getMonth()+1, 0, 18,0,0,0); if(d<=n){ d=new Date(n.getFullYear(), n.getMonth()+2, 0, 18,0,0,0);} return d; }
   function arm(){ var ms=nextRun()-new Date(); setTimeout(function(){ try{ sendMonthlySummary(); }catch(e){ console.warn('monthly fail',e); } arm(); }, ms); }
   arm();
