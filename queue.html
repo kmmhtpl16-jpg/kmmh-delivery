@@ -46,6 +46,7 @@
   .b-done{background:#dcfce7;color:#166534}
   .b-cancel{background:#f3f4f6;color:#6b7280}
   .b-post{background:#ffedd5;color:#9a3412}
+  .b-hold{background:#ede9fe;color:#5b21b6}
   .tag-together{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:#dcfce7;color:#16803c;white-space:nowrap}
   .tag-trip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:#dbeafe;color:#1e40af;white-space:nowrap}
   .trip-h{font-size:13px;font-weight:700;color:#1e40af;background:#eef4fb;border:1px solid #dbeafe;border-radius:7px;padding:7px 11px;margin:8px 12px 4px}
@@ -118,6 +119,11 @@
       <button class="pickbtn" id="fDestBtn" onclick="pickLocation('dest')" style="margin-top:6px">🗺️ หรือปักหมุดบนแผนที่เอง</button>
       <label>หมายเหตุ</label>
       <textarea id="fNote" placeholder="รายละเอียดเพิ่มเติม"></textarea>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;font-size:14px;color:var(--t1)">
+        <input type="checkbox" id="fOnHold" style="width:18px;height:18px;flex:none;accent-color:#7c3aed">
+        <span>⏸️ ยังไม่มีกำหนดส่ง (หน้างานยังไม่พร้อมรับสินค้า)</span>
+      </label>
+      <div class="hint">ติ๊กช่องนี้ถ้ายังไม่รู้วันส่ง — บิลจะไปอยู่ช่อง “รอกำหนดส่ง” ไม่ปนคิวรอจัดส่ง</div>
       <label>แนบรูปบิล หรือไฟล์ PDF (ถ้ามี)</label>
       <input type="file" id="fPhoto" accept="image/*,application/pdf" onchange="onAttach(this)">
       <img id="fPhotoPrev" class="photo" style="display:none">
@@ -156,6 +162,7 @@
       <div class="hint" style="margin-bottom:10px">เลือกเหตุผล</div>
       <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;margin-bottom:8px" onclick="applyCancel('order')">❌ ลูกค้ายกเลิกออเดอร์</button>
       <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;margin-bottom:8px" onclick="showPostpone()">📅 ต้องการเลื่อนวันส่ง</button>
+      <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;margin-bottom:8px" onclick="applyCancel('onhold')">⏸️ ยังไม่มีกำหนดส่ง (หน้างานยังไม่พร้อมรับ)</button>
       <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;margin-bottom:8px" onclick="applyCancel('pickup')">🏃 ลูกค้ารับสินค้าเอง (ไม่ต้องส่ง)</button>
       <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="closeCancel()">ปิด</button>
     </div>
@@ -372,11 +379,11 @@ async function saveBooking(){
     phone:document.getElementById('fPhone').value.trim(),
     note:document.getElementById('fNote').value.trim(),
     lat:pendingDest.lat, lng:pendingDest.lng,
-    attach:_pendingAttach||null, status:'booked', createdAt:Date.now(),
+    attach:_pendingAttach||null, status:((document.getElementById('fOnHold')||{}).checked?'onhold':'booked'), cancelReason:((document.getElementById('fOnHold')||{}).checked?'ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ':null), createdAt:Date.now(),
     drvLat:null, drvLng:null, gap:null
   });
   save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var m='\uD83D\udfe1 <b>\u0e08\u0e2d\u0e07\u0e43\u0e2b\u0e21\u0e48</b> \u00b7 '+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var m=(nb.status==='onhold'?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':'🟡 <b>จองใหม่</b> · ')+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');
@@ -386,6 +393,7 @@ async function saveBooking(){
   document.getElementById('fFileChip').style.display='none';
   document.getElementById('fPhoto').value=''; var _qt=document.getElementById('qJobType'); if(_qt) _qt.value='deliver'; document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b,ix){b.classList.toggle('active',ix===0);});
   updateBillUI();
+  var _oh=document.getElementById('fOnHold'); if(_oh) _oh.checked=false;
   var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
   alert('บันทึกการจองเรียบร้อย ✓');
   go('Queue');
@@ -421,11 +429,35 @@ function applyCancel(kind){
   if(kind==='order'){ b.status='cancel'; b.cancelReason='ลูกค้ายกเลิกออเดอร์'; }
   else if(kind==='postpone'){ b.status='postponed'; var nd=document.getElementById('postponeDate').value; b.newDate=nd||''; b.cancelReason='เลื่อนวันส่ง'+(nd?(' → '+fmtDate(nd)):''); }
   else if(kind==='pickup'){ b.status='cancel'; b.cancelReason='ลูกค้ารับสินค้าเอง (ไม่ต้องส่ง)'; }
-  var icon=(kind==='postpone')?'\uD83D\uDCC5':'\u274C'; var m=icon+' <b>'+(kind==='postpone'?'\u0e40\u0e25\u0e37\u0e48\u0e2d\u0e19\u0e27\u0e31\u0e19\u0e2a\u0e48\u0e07':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e08\u0e2d\u0e07')+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m,QUEUE_CHAT);
+  else if(kind==='onhold'){ b.status='onhold'; b.newDate=null; b.cancelReason='ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ'; }
+  var _ic,_tt; if(kind==='postpone'){_ic='📅';_tt='เลื่อนวันส่ง';} else if(kind==='onhold'){_ic='⏸️';_tt='พักไว้ก่อน · ยังไม่มีกำหนดส่ง';} else {_ic='❌';_tt='ยกเลิกการจอง';} var m=_ic+' <b>'+_tt+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m,QUEUE_CHAT);
   save(); closeCancel(); renderQueue();
 }
 function restoreBooking(id){ var b=find(id); if(b){ b.status='booked'; b.cancelReason=null; b.newDate=null; save(); renderQueue(); } }
 function find(id){ return state.bookings.filter(function(b){return b.id===id;})[0]; }
+function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function _dueNotified(k){ try{ var o=JSON.parse(localStorage.getItem('qb_due_notified')||'{}'); return !!o[k]; }catch(e){ return false; } }
+function _markDueNotified(k){ try{ var o=JSON.parse(localStorage.getItem('qb_due_notified')||'{}'); o[k]=1; localStorage.setItem('qb_due_notified',JSON.stringify(o)); }catch(e){} }
+function checkDueBookings(){
+  var today=todayStr(), changed=false;
+  (state.bookings||[]).forEach(function(b){
+    if(b.status==='postponed' && b.newDate && b.newDate<=today && b.autoReturnedOn!==today){
+      var nd=b.newDate;
+      b.status='booked'; b.autoReturnedOn=today; b.newDate=null; b.cancelReason=null; changed=true;
+      var k=b.id+'|'+today;
+      if(!_dueNotified(k)){
+        _markDueNotified(k);
+        var mapU='https://www.google.com/maps?q='+b.lat+','+b.lng;
+        var m='🔔 <b>ถึงกำหนดส่งแล้ว · กลับเข้าคิวรอจัดส่ง</b>\n🧾 บิล: '+b.bill+(b.type?('\n🏷️ '+jobTypeLabel(b.type)):'');
+        if(b.customer) m+='\n👤 '+b.customer;
+        if(b.phone) m+='\n☎ '+b.phone;
+        m+='\n📅 นัดส่งวันนี้ ('+fmtDate(nd)+')\n📍 ทิศ'+dirOf(b)+' · <a href="'+mapU+'">เปิดแผนที่</a>';
+        sendTelegram(m,QUEUE_CHAT);
+      }
+    }
+  });
+  if(changed) save();
+}
 function clusterBooked(arr, km){
   var rem=arr.slice(), out=[];
   while(rem.length){
@@ -437,6 +469,7 @@ function clusterBooked(arr, km){
 }
 function renderQueue(){
   state.threshold=state.threshold||2;
+  checkDueBookings();
   var list=document.getElementById('queueList');
   var bs=state.bookings;
   document.getElementById('stBooked').textContent=bs.filter(function(b){return b.status==='booked';}).length;
@@ -476,6 +509,8 @@ function renderQueue(){
   }
   var postponed=bs.filter(function(b){return b.status==='postponed';}).sort(byNew);
   if(postponed.length){ html+='<div class="group-h" style="color:#9a3412">📅 รอส่ง · คนละวัน ('+postponed.length+' บิล)</div>'; postponed.forEach(function(b){ html+=card(b); }); }
+  var onhold=bs.filter(function(b){return b.status==='onhold';}).sort(byNew);
+  if(onhold.length){ html+='<div class="group-h" style="color:#5b21b6">⏸️ ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ ('+onhold.length+' บิล)</div>'; onhold.forEach(function(b){ html+=card(b); }); }
   var done=bs.filter(function(b){return b.status==='done';}).sort(function(x,y){return (y.deliveredAt||0)-(x.deliveredAt||0);});
   if(done.length){ html+='<div class="group-h" style="color:var(--green)">✅ ส่งสำเร็จ ('+done.length+' บิล)</div>'; done.forEach(function(b){ html+=card(b); }); }
   var cancelled=bs.filter(function(b){return b.status==='cancel';}).sort(byNew);
@@ -484,7 +519,7 @@ function renderQueue(){
   updateTripCount();
 }
 function card(b,showChk,together){
-  var badge={booked:['b-booked','รอจัดส่ง'],delivering:['b-delivering','กำลังส่ง'],done:['b-done','ส่งสำเร็จ'],cancel:['b-cancel','ยกเลิก'],postponed:['b-post','เลื่อนส่ง']}[b.status];
+  var badge={booked:['b-booked','รอจัดส่ง'],delivering:['b-delivering','กำลังส่ง'],done:['b-done','ส่งสำเร็จ'],cancel:['b-cancel','ยกเลิก'],postponed:['b-post','เลื่อนส่ง'],onhold:['b-hold','ยังไม่มีกำหนดส่ง']}[b.status];
   var chk=showChk?('<input type="checkbox" id="chk_'+b.id+'"'+(tripMode?'':' checked')+' onclick="event.stopPropagation()" onchange="updateTripCount()" style="width:20px;height:20px;margin-top:2px;flex:none;accent-color:#16a34a">'):'';
   var h='<div class="q"'+(showChk?' style="display:flex;gap:10px;align-items:flex-start"':'')+'>'+chk+'<div style="flex:1"><div onclick="showDetail(\''+b.id+'\')" style="cursor:pointer"><div class="row1"><div>';
   h+='<div class="bill">'+b.bill+'</div>'; if(b.type) h+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
@@ -507,7 +542,7 @@ function card(b,showChk,together){
   h+='<div class="acts">';
   if(b.status==='booked'){ h+='<button class="btn btn-blue btn-sm" onclick="startDelivery(\''+b.id+'\')">🚚 ออกส่ง</button>'; h+='<button class="btn btn-ghost btn-sm" onclick="openCancelPopup(\''+b.id+'\')">ยกเลิก / เลื่อน</button>'; }
   else if(b.status==='delivering'){ h+='<button class="btn btn-green btn-sm" onclick="askDeliveryLocation(\''+b.id+'\')">✓ ถึงแล้ว / ส่งสำเร็จ</button>'; }
-  else if(b.status==='cancel'||b.status==='postponed'){ h+='<button class="btn btn-ghost btn-sm" onclick="restoreBooking(\''+b.id+'\')">↩️ กลับมารอจัดส่ง</button>'; }
+  else if(b.status==='cancel'||b.status==='postponed'||b.status==='onhold'){ h+='<button class="btn btn-ghost btn-sm" onclick="restoreBooking(\''+b.id+'\')">↩️ กลับมารอจัดส่ง</button>'; }
   h+='</div></div></div>';
   return h;
 }
@@ -574,40 +609,10 @@ function resetAll(){
   var sb=document.getElementById('fStoreBtn'); sb.classList.remove('has'); sb.textContent='🏠 ปักหมุดที่ตั้งร้าน';
   alert('ล้างข้อมูลแล้ว'); renderQueue();
 }
-var LOGIN_URL = SB_URL + '/functions/v1/login';
-var DELIV_PIN = '2546';
-async function mintSession(pin){
-  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
-  for(var attempt=0; attempt<3; attempt++){
-    var res;
-    try{
-      res = await fetch(LOGIN_URL,{ method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY }, body: JSON.stringify({ pin:pin }) });
-    }catch(e){ if(attempt<2){ await sleep(400); continue; } return 'network'; }
-    if(res.status===401){ return 'invalid_pin'; }
-    var j = await res.json().catch(function(){ return {}; });
-    if(res.ok && j.access_token){
-      var r = await db.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token });
-      if(!r.error) return null;
-      if(attempt<2){ await sleep(400); continue; }
-      return 'session_error';
-    }
-    if(attempt<2){ await sleep(400); continue; }
-    return j.error || ('error_'+res.status);
-  }
-  return 'error';
-}
-async function ensureSession(){
-  initDB();
-  if(!db) return false;
-  try{ var s = await db.auth.getSession(); if(s && s.data && s.data.session) return true; }catch(e){}
-  var err = await mintSession(DELIV_PIN);
-  if(err) console.warn('auto-login:', err);
-  return !err;
-}
-(async function(){
+(function(){
   document.getElementById('fThreshold').value=state.threshold||2;
   if(state.store){ var sb=document.getElementById('fStoreBtn'); sb.classList.add('has'); sb.textContent='🏠 ตั้งจุดร้านแล้ว ('+state.store.lat.toFixed(4)+', '+state.store.lng.toFixed(4)+')'; }
-  await ensureSession();
+  initDB();
   renderQueue();
   loadCloud();
   loadConfig();
