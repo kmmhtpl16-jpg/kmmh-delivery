@@ -89,7 +89,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.0 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.1 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -198,20 +198,30 @@ var state=load();
 var pendingDest=null;
 var _pendingAttach=null;
 var tripMode=false;
+var _cloudSnap={};  // id -> JSON ของบิลตามที่โหลดจาก cloud ล่าสุด (กัน client อัปทับทั้งชุด)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
 function def(){ return {bookings:[], store:null, threshold:2}; }
 function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
   if(db){
-    var rows=state.bookings.map(function(b){ return {id:b.id, status:b.status, created_at:b.createdAt, data:b}; });
-    if(rows.length) db.from('bookings').upsert(rows,{onConflict:'id'}).then(null,function(e){ console.warn('save',e); });
+    // อัปเฉพาะบิลที่ต่างจากที่โหลดมาจาก cloud (บิลที่เครื่องนี้แก้จริง) — ไม่ยกทั้งชุดไปทับของสดคนอื่น
+    var rows=[], js=[];
+    state.bookings.forEach(function(b){
+      var j=JSON.stringify(b);
+      if(_cloudSnap[b.id]!==j){ rows.push({id:b.id, status:b.status, created_at:b.createdAt, data:b}); js.push(j); }
+    });
+    if(rows.length){
+      db.from('bookings').upsert(rows,{onConflict:'id'}).then(function(){
+        rows.forEach(function(r,i){ _cloudSnap[r.id]=js[i]; });
+      },function(e){ console.warn('save',e); });
+    }
   }
 }
 async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 async function loadCloud(){
   if(!db) return;
-  try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); renderQueue(); } }catch(e){ console.warn('load',e); }
+  try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); }); renderQueue(); } }catch(e){ console.warn('load',e); }
 }
 var QUEUE_CHAT='-5142584793';
 function sendTelegram(text,chat_id){
