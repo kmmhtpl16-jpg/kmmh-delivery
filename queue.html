@@ -117,13 +117,16 @@
       <input type="text" id="fDestLink" placeholder="วางลิงก์ Google Maps หรือ 14.123, 100.456" autocomplete="off" oninput="parseDestLink()">
       <div id="fDestStatus" class="hint">วิธีง่ายสุด: ก๊อปลิงก์ที่ลูกค้าส่งมา วางในช่องนี้ได้เลย</div>
       <button class="pickbtn" id="fDestBtn" onclick="pickLocation('dest')" style="margin-top:6px">🗺️ หรือปักหมุดบนแผนที่เอง</button>
+      <label id="fDeliveryDateLabel">📅 วันที่ต้องการจัดส่ง *</label>
+      <input type="date" id="fDeliveryDate" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;font-size:15px;font-family:inherit;background:#fafafa">
+      <div class="hint">เลือกวันที่ลูกค้าต้องการรับของ · ถ้าเลือกวันในอนาคต บิลจะไปรออยู่ช่อง “นัดส่งล่วงหน้า” แล้วเด้งเข้าคิวเองเมื่อถึงวัน · ถ้ายังไม่รู้วัน ให้ติ๊กช่องด้านล่าง</div>
       <label>หมายเหตุ</label>
       <textarea id="fNote" placeholder="รายละเอียดเพิ่มเติม"></textarea>
       <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;font-size:14px;color:var(--t1)">
-        <input type="checkbox" id="fOnHold" style="width:18px;height:18px;flex:none;accent-color:#7c3aed">
+        <input type="checkbox" id="fOnHold" onchange="onHoldToggle()" style="width:18px;height:18px;flex:none;accent-color:#7c3aed">
         <span>⏸️ ยังไม่มีกำหนดส่ง (หน้างานยังไม่พร้อมรับสินค้า)</span>
       </label>
-      <div class="hint">ติ๊กช่องนี้ถ้ายังไม่รู้วันส่ง — บิลจะไปอยู่ช่อง “รอกำหนดส่ง” ไม่ปนคิวรอจัดส่ง</div>
+      <div class="hint">ติ๊กช่องนี้ถ้ายังไม่รู้วันส่ง — บิลจะไปอยู่ช่อง “รอกำหนดส่ง” ไม่ปนคิวรอจัดส่ง (ช่องวันที่จะถูกปิดชั่วคราว)</div>
       <label>แนบรูปบิล หรือไฟล์ PDF (ถ้ามี)</label>
       <input type="file" id="fPhoto" accept="image/*,application/pdf" onchange="onAttach(this)">
       <img id="fPhotoPrev" class="photo" style="display:none">
@@ -361,11 +364,26 @@ function autoRef(type){
   return ref;
 }
 function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; } var dup=state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===v && b.status!=='cancel';}); if(dup){ st.innerHTML='⚠️ เลขบิลนี้มีในระบบแล้ว'; st.style.color='var(--red)'; } else { st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; } }
+function onHoldToggle(){
+  var oh=document.getElementById('fOnHold'), dv=document.getElementById('fDeliveryDate'), lb=document.getElementById('fDeliveryDateLabel');
+  if(!dv) return;
+  if(oh&&oh.checked){ dv.value=''; dv.disabled=true; dv.style.opacity=.45; if(lb){ lb.textContent='📅 วันที่ต้องการจัดส่ง (ปิดไว้ — ยังไม่มีกำหนดส่ง)'; lb.style.opacity=.6; } }
+  else { dv.disabled=false; dv.style.opacity=1; if(lb){ lb.textContent='📅 วันที่ต้องการจัดส่ง *'; lb.style.opacity=1; } }
+}
 async function saveBooking(){
   var type=((document.getElementById('qJobType')||{}).value)||'deliver';
   var bill=document.getElementById('fBill').value.trim().toUpperCase();
   if(billRequired(type) && !bill){ alert('กรุณากรอกเลขที่บิล (งานส่งลูกค้าต้องมีเลขบิล)'); return; }
   if(!pendingDest){ alert('กรุณาวางลิงก์ Google Maps หรือปักหมุดปลายทาง'); return; }
+  var _onHold=((document.getElementById('fOnHold')||{}).checked)||false;
+  var _delivDate=((document.getElementById('fDeliveryDate')||{}).value)||'';
+  if(!_onHold && !_delivDate){ alert('กรุณาเลือกวันที่ต้องการจัดส่ง — หรือถ้ายังไม่รู้วัน ให้ติ๊ก “ยังไม่มีกำหนดส่ง”'); return; }
+  var _today=todayStr();
+  if(!_onHold && _delivDate < _today){ alert('วันที่จัดส่งเป็นวันที่ผ่านมาแล้ว กรุณาเลือกวันนี้หรือวันในอนาคต'); return; }
+  var _st, _newDate=null;
+  if(_onHold){ _st='onhold'; }
+  else if(_delivDate > _today){ _st='postponed'; _newDate=_delivDate; }
+  else { _st='booked'; }
   if(bill){
     if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
     if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
@@ -379,11 +397,16 @@ async function saveBooking(){
     phone:document.getElementById('fPhone').value.trim(),
     note:document.getElementById('fNote').value.trim(),
     lat:pendingDest.lat, lng:pendingDest.lng,
-    attach:_pendingAttach||null, status:((document.getElementById('fOnHold')||{}).checked?'onhold':'booked'), cancelReason:((document.getElementById('fOnHold')||{}).checked?'ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ':null), createdAt:Date.now(),
+    attach:_pendingAttach||null,
+    status:_st,
+    deliveryDate:(_onHold?null:_delivDate),
+    newDate:_newDate,
+    cancelReason:(_onHold?'ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ':(_st==='postponed'?('นัดส่งล่วงหน้า → '+fmtDate(_delivDate)):null)),
+    createdAt:Date.now(),
     drvLat:null, drvLng:null, gap:null
   });
   save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var m=(nb.status==='onhold'?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':'🟡 <b>จองใหม่</b> · ')+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var _hd=(nb.status==='onhold')?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':((nb.status==='postponed')?('📅 <b>จองใหม่ · นัดส่งล่วงหน้า '+fmtDate(nb.newDate)+'</b> · '):'🟡 <b>จองใหม่ · ส่งวันนี้</b> · '); var m=_hd+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');
@@ -394,6 +417,8 @@ async function saveBooking(){
   document.getElementById('fPhoto').value=''; var _qt=document.getElementById('qJobType'); if(_qt) _qt.value='deliver'; document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b,ix){b.classList.toggle('active',ix===0);});
   updateBillUI();
   var _oh=document.getElementById('fOnHold'); if(_oh) _oh.checked=false;
+  var _dv=document.getElementById('fDeliveryDate'); if(_dv){ _dv.value=''; _dv.disabled=false; _dv.style.opacity=1; }
+  var _dvl=document.getElementById('fDeliveryDateLabel'); if(_dvl) _dvl.style.opacity=1;
   var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
   alert('บันทึกการจองเรียบร้อย ✓');
   go('Queue');
@@ -427,7 +452,7 @@ function closeCancel(){ document.getElementById('cancelModal').classList.remove(
 function applyCancel(kind){
   var b=find(_cancelId); if(!b){ closeCancel(); return; }
   if(kind==='order'){ b.status='cancel'; b.cancelReason='ลูกค้ายกเลิกออเดอร์'; }
-  else if(kind==='postpone'){ b.status='postponed'; var nd=document.getElementById('postponeDate').value; b.newDate=nd||''; b.cancelReason='เลื่อนวันส่ง'+(nd?(' → '+fmtDate(nd)):''); }
+  else if(kind==='postpone'){ b.status='postponed'; var nd=document.getElementById('postponeDate').value; b.newDate=nd||''; if(nd) b.deliveryDate=nd; b.cancelReason='เลื่อนวันส่ง'+(nd?(' → '+fmtDate(nd)):''); }
   else if(kind==='pickup'){ b.status='cancel'; b.cancelReason='ลูกค้ารับสินค้าเอง (ไม่ต้องส่ง)'; }
   else if(kind==='onhold'){ b.status='onhold'; b.newDate=null; b.cancelReason='ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ'; }
   var _ic,_tt; if(kind==='postpone'){_ic='📅';_tt='เลื่อนวันส่ง';} else if(kind==='onhold'){_ic='⏸️';_tt='พักไว้ก่อน · ยังไม่มีกำหนดส่ง';} else {_ic='❌';_tt='ยกเลิกการจอง';} var m=_ic+' <b>'+_tt+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m,QUEUE_CHAT);
@@ -507,8 +532,9 @@ function renderQueue(){
     var tn=0;
     torder.forEach(function(k){ var grp=trips[k]; tn++; html+='<div class="trip-h">'+(grp.length>1?'🧩':'🚚')+' เที่ยว #'+tn+' ('+grp.length+' บิล)</div>'; grp.forEach(function(b){ html+=card(b); }); });
   }
-  var postponed=bs.filter(function(b){return b.status==='postponed';}).sort(byNew);
-  if(postponed.length){ html+='<div class="group-h" style="color:#9a3412">📅 รอส่ง · คนละวัน ('+postponed.length+' บิล)</div>'; postponed.forEach(function(b){ html+=card(b); }); }
+  var byDate=function(x,y){ var dx=(x.newDate||x.deliveryDate||'9999-99-99'), dy=(y.newDate||y.deliveryDate||'9999-99-99'); if(dx!==dy) return dx<dy?-1:1; return (y.createdAt||0)-(x.createdAt||0); };
+  var postponed=bs.filter(function(b){return b.status==='postponed';}).sort(byDate);
+  if(postponed.length){ html+='<div class="group-h" style="color:#9a3412">📅 นัดส่งล่วงหน้า · คนละวัน ('+postponed.length+' บิล)</div>'; postponed.forEach(function(b){ html+=card(b); }); }
   var onhold=bs.filter(function(b){return b.status==='onhold';}).sort(byNew);
   if(onhold.length){ html+='<div class="group-h" style="color:#5b21b6">⏸️ ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ ('+onhold.length+' บิล)</div>'; onhold.forEach(function(b){ html+=card(b); }); }
   var done=bs.filter(function(b){return b.status==='done';}).sort(function(x,y){return (y.deliveredAt||0)-(x.deliveredAt||0);});
@@ -524,6 +550,7 @@ function card(b,showChk,together){
   var h='<div class="q"'+(showChk?' style="display:flex;gap:10px;align-items:flex-start"':'')+'>'+chk+'<div style="flex:1"><div onclick="showDetail(\''+b.id+'\')" style="cursor:pointer"><div class="row1"><div>';
   h+='<div class="bill">'+b.bill+'</div>'; if(b.type) h+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
   h+='<div class="meta">'+(b.customer||'-')+(b.phone?(' · ☎ '+b.phone):'')+'</div>';
+  var _cdd=b.newDate||b.deliveryDate; if(_cdd && b.status!=='done' && b.status!=='cancel') h+='<div class="meta" style="color:var(--blue);font-weight:600">📅 นัดส่ง '+fmtDate(_cdd)+(_cdd===todayStr()?' · วันนี้':'')+'</div>';
   if(b.note) h+='<div class="meta">📝 '+b.note+'</div>';
   h+='<div class="meta">📍 '+b.lat.toFixed(4)+', '+b.lng.toFixed(4)+'</div>';
   h+='<span class="dir">🧭 '+dirOf(b)+'</span>';
@@ -554,6 +581,7 @@ function showDetail(id){
   var html='';
   html+='<div style="font-weight:700;font-size:16px">'+b.bill+'</div>'; if(b.type) html+='<div class="meta">🏷️ '+jobTypeLabel(b.type)+'</div>';
   html+='<div class="meta">'+(b.customer||'-')+(b.phone?(' &middot; &#9742; '+b.phone):'')+'</div>';
+  var _ddd=b.newDate||b.deliveryDate; if(_ddd) html+='<div class="meta" style="color:var(--blue);font-weight:600">&#128197; นัดส่ง '+fmtDate(_ddd)+(_ddd===todayStr()?' &middot; วันนี้':'')+((b.status==='onhold')?'':'')+'</div>'; else if(b.status==='onhold') html+='<div class="meta" style="color:#5b21b6">&#9208;&#65039; ยังไม่มีกำหนดส่ง</div>';
   if(b.note) html+='<div class="meta">&#128221; '+b.note+'</div>';
   html+='<div class="meta">&#129517; ทิศ'+dirOf(b)+'</div>';
   html+='<div style="margin-top:8px;font-size:13px"><b>จุดที่จอง:</b> '+b.lat.toFixed(5)+', '+b.lng.toFixed(5)+' &middot; <a href="'+gmap(b.lat,b.lng)+'" target="_blank" style="color:#2563eb">เปิด Google Maps</a></div>';
@@ -611,6 +639,7 @@ function resetAll(){
 }
 (function(){
   document.getElementById('fThreshold').value=state.threshold||2;
+  var _dd0=document.getElementById('fDeliveryDate'); if(_dd0) _dd0.min=todayStr();
   if(state.store){ var sb=document.getElementById('fStoreBtn'); sb.classList.add('has'); sb.textContent='🏠 ตั้งจุดร้านแล้ว ('+state.store.lat.toFixed(4)+', '+state.store.lng.toFixed(4)+')'; }
   initDB();
   renderQueue();
