@@ -922,6 +922,28 @@ async function tgDeliverySuccess(rec){
   if(doSend) sendTelegramDeliv(msg);
   markBookingDone(rec.bill);
 }
+async function tgPenaltyAlert(rec, retro){
+  if(!rec || !rec.incomplete) return;
+  var NL='\n';
+  var penL=(rec.penaltyType==='wrong')?'ส่งผิด':'ส่งไม่ครบ';
+  var full=Math.round((rec.tripTotal||0)*2);
+  var cut=Math.round(rec.tripTotal||0);
+  var team=(rec.helpers||[]).length?(rec.driver+', '+rec.helpers.join(', ')):(rec.driver||'-');
+  var msg='⚠️ <b>บิลโดนหักค่าเที่ยว 50%</b>'+NL
+    +'🧾 บิล: '+rec.bill+NL
+    +'🚩 สาเหตุ: '+penL+NL
+    +(rec.incompleteReason?('📝 '+rec.incompleteReason+NL):'')
+    +'💰 ค่าเที่ยว: <s>฿'+full+'</s> → <b>฿'+cut+'</b> (คนขับ+ผู้ช่วยทุกคน)'+NL
+    +'👤 '+team
+    +(retro?(NL+'🔧 ปรับย้อนหลังโดย '+((typeof currentRole!=='undefined'&&currentRole)||'แอดมิน')):'');
+  var c=await claimNotify(rec.id,'penalty');
+  var doSend=(c===true);
+  if(c===null){
+    var key='pen_'+rec.id;
+    if(!_sentDoneIds.has(key)){ _sentDoneIds.add(key); localStorage.setItem('_sentDoneIds', JSON.stringify([..._sentDoneIds])); doSend=true; }
+  }
+  if(doSend) sendTelegramDeliv(msg);
+}
 // อัปเดตสถานะคิวจอง (bookings) เป็น done เมื่อส่งสำเร็จ — ทั้ง cloud + local
 async function markBookingDone(bill){
   var k=(bill||'').trim().toUpperCase(); if(!k) return;
@@ -3015,6 +3037,7 @@ function saveStep2(){
   records[idx].photosAfter=[...photosAfterNew]; // local base64 first
   save();
   tgDeliverySuccess(records[idx]); // ✅ แจ้ง "จัดส่งสำเร็จ" เข้ากลุ่ม + ปิดคิวจอง
+  tgPenaltyAlert(records[idx]); // ⚠️ แจ้งเตือนเฉพาะกรณีหัก 50% (แยกข้อความ)
   closeStep2(); renderPending(); updatePendingBadge();
   showSuccess('บันทึกข้อมูลสำเร็จแล้ว', 'บิล '+records[idx].bill+' ส่งสินค้าเรียบร้อยแล้ว 🎉');
 }
@@ -3063,10 +3086,12 @@ function renderHistory(){
       +'<span class="badge '+typeBadge+'">'+typeLabel+'</span> '
       +'<span class="badge '+carBadge+'">'+carShort+'</span>'
       +(done?'<span class="badge b-green">✓ ส่งครบ</span>':'<span class="badge b-red">📷 รอส่งรูป</span>')
-      +(r.incomplete?('<span class="badge b-red">🚧 '+penaltyLabel(r)+'</span>'):'')
+      +(r.incomplete?('<span class="badge b-red">🚧 หัก 50% · '+penaltyLabel(r)+'</span>'):'')
       +(r.brickOn||r.crane||r.labor?'<span class="badge b-amber">⭐พิเศษ</span>':'')
       +(pc?'<span class="badge b-gray">📷'+pc+'</span>':'')
-      +'<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
+      +(r.incomplete
+        ? '<span class="hi-amount" style="color:var(--red)"><s style="opacity:.6;font-weight:600;margin-right:5px">฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+'</s>฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
+        : '<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>')
       +'</div></div>';
   });
   // ปุ่มโหลดเพิ่ม ถ้ายังมีบิลที่ยังไม่แสดง
@@ -3368,6 +3393,7 @@ function markIncomplete(id, type){
   r.lastEditedBy=(typeof currentRole!=='undefined'?currentRole:'user'); r.lastEditedAt=new Date().toISOString();
   logIncomplete(r, true, reason, label);
   save(); if(typeof saveToCloud==='function') saveToCloud(r);
+  if(typeof tgPenaltyAlert==='function') tgPenaltyAlert(r, true); // ⚠️ แจ้ง Telegram กรณีหักย้อนหลัง
   toast('ok','✓ '+label+' — หักค่าเที่ยว 50% แล้ว');
   closeDetail(); renderHistory(); renderPending(); if(typeof updatePendingBadge==='function') updatePendingBadge();
 }
