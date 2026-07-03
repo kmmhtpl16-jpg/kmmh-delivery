@@ -1820,7 +1820,7 @@ function calcAll(){
   const extraPP = (crane?10:0)+(labor?5:0);
   const destVal = document.getElementById('fDest').value.toUpperCase();
   const delivTypeCalc = document.getElementById('fDeliveryType').value;
-  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive';
+  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive' || delivTypeCalc === 'klang';
   const baseDrv = isUPK ? 0 : 40;
   const baseHlp = isUPK ? 0 : 20;
   const drvTotal = baseDrv+brickPP+extraPP;
@@ -1831,7 +1831,7 @@ function calcAll(){
   const detail = document.getElementById('bonusDetail');
   if(!drv){ card.style.display='none'; return; }
   let h = '';
-  if(isUPK){ h += '<div style="background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue);margin-bottom:6px">🏢 UPK — ไม่คิดค่าเที่ยวพื้นฐาน</div>'; }
+  if(isUPK){ h += '<div style="background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue);margin-bottom:6px">🏭 งานส่งคลัง/รับสินค้า/UPK — ไม่คิดค่าเที่ยวพื้นฐาน</div>'; }
   if(brickOn&&brickQty>0){
     h += '<div class="bonus-row"><span>🧱 อิฐ '+brickQty.toLocaleString()+' ก้อน×0.25฿</span><span>฿'+brickTotal.toFixed(2)+'</span></div>';
     h += '<div class="bonus-row" style="font-size:12px;color:var(--t3)"><span>÷'+nAll+'คน=ต่อคน</span><span>฿'+brickPP.toFixed(2)+'</span></div>';
@@ -2195,7 +2195,7 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   var hlpArr = [...helpers];
   var dest = document.getElementById('fDest').value.trim();
   var delivTypeVal = document.getElementById('fDeliveryType').value;
-  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive';
+  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive' || delivTypeVal === 'klang';
   var brickOn = document.getElementById('chipBrick').classList.contains('on');
   var brickQty = brickOn ? (parseInt(document.getElementById('fBrickQty').value)||0) : 0;
   var crane = document.getElementById('chipCrane').classList.contains('on');
