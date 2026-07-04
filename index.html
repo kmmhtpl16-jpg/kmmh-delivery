@@ -1454,7 +1454,8 @@ function dbToRec(row){
     photosBefore: row.photos_before||[], photosAfter: row.photos_after||[],
     status: row.status||'pending',
     approvedBy: row.approved_by||null,
-    approvedAt: row.approved_at||null
+    approvedAt: row.approved_at||null,
+    overpayNote: row.overpay_note||''
   };
 }
 
@@ -3087,12 +3088,15 @@ function renderHistory(){
       +'<span class="badge '+carBadge+'">'+carShort+'</span>'
       +(done?'<span class="badge b-green">✓ ส่งครบ</span>':'<span class="badge b-red">📷 รอส่งรูป</span>')
       +(r.incomplete?('<span class="badge b-red">🚧 หัก 50% · '+penaltyLabel(r)+'</span>'):'')
+      +(r.overpayNote?('<span class="badge b-amber">💸 จ่ายเกิน · หักคืน</span>'):'')
       +(r.brickOn||r.crane||r.labor?'<span class="badge b-amber">⭐พิเศษ</span>':'')
       +(pc?'<span class="badge b-gray">📷'+pc+'</span>':'')
       +(r.incomplete
         ? '<span class="hi-amount" style="color:var(--red)"><s style="opacity:.6;font-weight:600;margin-right:5px">฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+'</s>฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
         : '<span class="hi-amount">฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>')
-      +'</div></div>';
+      +'</div>'
+      +(r.overpayNote?('<div style="margin-top:6px;font-size:11.5px;color:var(--amber);background:var(--amber-bg);border:0.5px solid #fac775;border-radius:6px;padding:5px 9px">💸 '+String(r.overpayNote).replace(/[&<>]/g,' ')+'</div>'):'')
+      +'</div>';
   });
   // ปุ่มโหลดเพิ่ม ถ้ายังมีบิลที่ยังไม่แสดง
   var remain = f.length - shown.length;
