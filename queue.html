@@ -81,6 +81,9 @@
   .seg{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
   .seg-btn{flex:1;min-width:92px;padding:9px 8px;border:1px solid var(--line);border-radius:9px;background:#fafafa;font-size:13px;font-weight:600;font-family:inherit;color:var(--t2);cursor:pointer}
   .seg-btn.active{background:#fff0eb;border-color:var(--orange);color:var(--orange)}
+  .favwrap{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px;margin:8px 0 2px}
+  .favchip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #f0b9a6;color:#9a3412;border-radius:20px;padding:7px 11px;font-size:13px;font-weight:700;cursor:pointer;margin:5px 6px 0 0}
+  .favx{display:inline-flex;font-size:10px;color:#c2410c;background:#ffe4d5;border-radius:50%;width:17px;height:17px;align-items:center;justify-content:center}
 </style>
 </head>
 <body>
@@ -106,6 +109,11 @@
         <button type="button" class="seg-btn" onclick="selJobType(this,'klang')">🏭 ส่งคลัง</button>
       </div>
       <input type="hidden" id="qJobType" value="deliver">
+      <div id="favBar" class="favwrap" style="display:none">
+        <div style="font-size:12.5px;color:#9a3412;font-weight:700;margin-bottom:2px">⭐ รายการโปรด (งานประจำ) — แตะเพื่อเติมข้อมูลอัตโนมัติ</div>
+        <div id="favChips"></div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveCurrentAsFavorite()">＋ บันทึกที่กรอกไว้เป็นรายการโปรด</button>
+      </div>
       <label id="fBillLabel">เลขที่บิล *</label>
       <input type="text" id="fBill" placeholder="เช่น KM6906-0963" autocomplete="off" oninput="checkDupBill()">
       <div id="fBillStatus" class="hint"></div>
@@ -200,7 +208,7 @@ var _pendingAttach=null;
 var tripMode=false;
 var _cloudSnap={};  // id -> JSON ของบิลตามที่โหลดจาก cloud ล่าสุด (กัน client อัปทับทั้งชุด)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
-function def(){ return {bookings:[], store:null, threshold:2}; }
+function def(){ return {bookings:[], store:null, threshold:2, favorites:[]}; }
 function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
 // ล็อกอินเงียบอัตโนมัติ: ให้ RLS ทำงานเป็น authenticated (จองคิว/บันทึกลง bookings ได้) — พนักงานไม่ต้องพิมพ์รหัส
 var LOGIN_URL=SB_URL+'/functions/v1/login';
@@ -247,7 +255,7 @@ function save(){
     }
   }
 }
-async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
+async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; _qbCfg=c; state.favorites=Array.isArray(c.favorites)?c.favorites:(state.favorites||[]); renderFavBar(); if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 async function loadCloud(){
   if(!db) return;
   try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); }); renderQueue(); } }catch(e){ console.warn('load',e); }
@@ -277,6 +285,7 @@ function go(p){
     var tb=document.getElementById('tab'+x); if(tb) tb.classList.toggle('on',x===p);
   });
   if(p==='Queue') renderQueue();
+  if(p==='Book') renderFavBar();
   window.scrollTo(0,0);
 }
 var _map=null,_marker=null,_pickTarget=null,_pickLatLng=null;
@@ -379,8 +388,60 @@ function onAttach(input){
 }
 var JOB_TYPES={deliver:'🚚 ส่งลูกค้า',receive:'📦 รับสินค้า',upk:'🏢 UPK',klang:'🏭 ส่งคลัง'};
 function jobTypeLabel(v){ return JOB_TYPES[v]||''; }
-function selJobType(btn,type){ document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); var h=document.getElementById('qJobType'); if(h) h.value=type; updateBillUI(); }
+function selJobType(btn,type){ document.querySelectorAll('#qDeliveryTypeSeg .seg-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active'); var h=document.getElementById('qJobType'); if(h) h.value=type; updateBillUI(); renderFavBar(); }
 function billRequired(type){ return type==='deliver'; }
+var _qbCfg={};
+function escHtml(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function favSupported(t){ return t==='klang'||t==='upk'; }
+function renderFavBar(){
+  var bar=document.getElementById('favBar'); if(!bar) return;
+  var t=((document.getElementById('qJobType')||{}).value)||'deliver';
+  if(!favSupported(t)){ bar.style.display='none'; return; }
+  bar.style.display='block';
+  var chips=document.getElementById('favChips'); if(!chips) return;
+  var favs=(state.favorites||[]).filter(function(f){return f.type===t;});
+  if(!favs.length){ chips.innerHTML='<div class="hint" style="margin:0">ยังไม่มีรายการโปรด — กรอกชื่อ/เบอร์/ปลายทางแล้วกดปุ่มด้านล่าง เก็บไว้ใช้ครั้งหน้า</div>'; return; }
+  chips.innerHTML=favs.map(function(f){ return '<span class="favchip" onclick="applyFavorite(\''+f.id+'\')">⭐ '+escHtml(f.label)+'<span class="favx" title="ลบ" onclick="event.stopPropagation();deleteFavorite(\''+f.id+'\')">✕</span></span>'; }).join('');
+}
+function applyFavorite(id){
+  var f=(state.favorites||[]).filter(function(x){return x.id===id;})[0]; if(!f) return;
+  var c=document.getElementById('fCustomer'); if(c) c.value=f.customer||'';
+  var p=document.getElementById('fPhone'); if(p) p.value=f.phone||'';
+  if(f.note){ var n=document.getElementById('fNote'); if(n && !n.value.trim()) n.value=f.note; }
+  var dl=document.getElementById('fDestLink'); if(dl) dl.value='';
+  if(f.lat!=null && f.lng!=null){ setDest({lat:f.lat,lng:f.lng},'รายการโปรด: '+f.label); }
+}
+function saveFavoritesCloud(){
+  try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
+  if(!db) return;
+  var merged=Object.assign({}, _qbCfg, {favorites:state.favorites||[]});
+  if(state.store){ merged.storeLat=state.store.lat; merged.storeLng=state.store.lng; }
+  if(state.threshold!=null) merged.threshold=state.threshold;
+  _qbCfg=merged;
+  db.from('qb_config').upsert({id:'main',data:merged}).then(null,function(e){ console.warn('fav',e); });
+}
+function saveCurrentAsFavorite(){
+  var t=((document.getElementById('qJobType')||{}).value)||'deliver';
+  if(!favSupported(t)){ alert('รายการโปรดใช้ได้เฉพาะงานส่งคลัง / UPK'); return; }
+  var cust=document.getElementById('fCustomer').value.trim();
+  var phone=document.getElementById('fPhone').value.trim();
+  if(!pendingDest){ alert('กรุณาตั้งปลายทางก่อน (วางลิงก์ Google Maps หรือปักหมุด) แล้วค่อยกดบันทึกเป็นรายการโปรด'); return; }
+  var label=prompt('ตั้งชื่อรายการโปรด (เช่น BEST, Flash, Shopee, J&T)', cust||'');
+  if(label===null) return; label=label.trim(); if(!label){ alert('กรุณาตั้งชื่อรายการโปรด'); return; }
+  if(!Array.isArray(state.favorites)) state.favorites=[];
+  var note=document.getElementById('fNote').value.trim();
+  var dup=state.favorites.filter(function(f){return f.type===t && (f.label||'').trim().toLowerCase()===label.toLowerCase();})[0];
+  if(dup){ if(!confirm('มีรายการโปรดชื่อ "'+label+'" อยู่แล้ว — อัปเดตทับด้วยข้อมูลที่กรอกตอนนี้ไหม?')) return; dup.customer=cust; dup.phone=phone; dup.lat=pendingDest.lat; dup.lng=pendingDest.lng; dup.note=note; }
+  else { state.favorites.unshift({id:Date.now().toString(), type:t, label:label, customer:cust, phone:phone, lat:pendingDest.lat, lng:pendingDest.lng, note:note}); }
+  saveFavoritesCloud(); renderFavBar();
+  alert('บันทึกรายการโปรด "'+label+'" แล้ว ✓ (ทุกเครื่องเห็นเหมือนกัน)');
+}
+function deleteFavorite(id){
+  var f=(state.favorites||[]).filter(function(x){return x.id===id;})[0]; if(!f) return;
+  if(!confirm('ลบรายการโปรด "'+f.label+'" ?')) return;
+  state.favorites=(state.favorites||[]).filter(function(x){return x.id!==id;});
+  saveFavoritesCloud(); renderFavBar();
+}
 function updateBillUI(){
   var t=((document.getElementById('qJobType')||{}).value)||'deliver';
   var lab=document.getElementById('fBillLabel'), inp=document.getElementById('fBill'), st=document.getElementById('fBillStatus');
