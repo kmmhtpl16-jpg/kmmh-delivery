@@ -2423,7 +2423,9 @@ function switchAdminTab(tab){
 // ค่าเที่ยว → Payroll : รวมค่าเที่ยวรายคนต่อเดือน ส่งเข้า extra_income_entries
 // ════════════════════════════════════════════════════════════
 // แม็พชื่อเล่นในระบบจัดส่ง → ชื่อเล่นในระบบเงินเดือน (กรณีสะกดไม่ตรง)
-var PAYROLL_NAME_MAP = { 'แซ้งค์':'แซ้ง', 'พีพี':'พี' };
+// 28ก.ค.69: ชื่อมาตรฐาน "แซ้งค์" ตรงกันทุกโปรแกรมแล้ว → เอา 'แซ้งค์':'แซ้ง' ออก
+// (แม็พมือเดิมพังเงียบเมื่อระบบเงินเดือนแก้ชื่อเล่น จึงเพิ่มการเทียบสำรองใน prResolveEmp)
+var PAYROLL_NAME_MAP = { 'พีพี':'พี' };
 var PR_LABEL = 'ค่าเที่ยวจัดส่ง';
 var _prEmployees = null;       // [{id,nickname,full_name,is_active}]
 var _prNickToEmp = {};         // nickname(payroll) -> emp object
@@ -2437,10 +2439,30 @@ async function loadPayrollEmployees(force){
   _prEmployees.forEach(function(e){ _prNickToEmp[(e.nickname||'').trim()] = e; });
   return _prEmployees;
 }
+// ตัดวรรณยุกต์/การันต์/ช่องว่าง เพื่อเทียบชื่อแบบยืดหยุ่น (แซ้งค์→แซงค, จ๋า/จ่า→จา)
+function _prNorm(s){ return (s||'').replace(/[็-๎\s]/g,''); }
 function prResolveEmp(deliveryNick){
   var n = (deliveryNick||'').trim();
-  var mapped = PAYROLL_NAME_MAP[n] || n;
-  return _prNickToEmp[mapped] || null;
+  if(!n) return null;
+  // 1) ชื่อตรงกันเป๊ะ
+  if(_prNickToEmp[n]) return _prNickToEmp[n];
+  // 2) แม็พมือ (จัดส่ง→เงินเดือน) และแม็พย้อนกลับ (เงินเดือน→จัดส่ง)
+  var mapped = PAYROLL_NAME_MAP[n];
+  if(mapped && _prNickToEmp[mapped]) return _prNickToEmp[mapped];
+  for(var k in PAYROLL_NAME_MAP){
+    if(PAYROLL_NAME_MAP[k]===n && _prNickToEmp[k]) return _prNickToEmp[k];
+  }
+  // 3) สำรอง: เทียบแบบตัดวรรณยุกต์ + ยอมให้เป็นคำขึ้นต้นของกันได้
+  //    (ต้องเจอคนเดียวเท่านั้น ถ้าซ้ำ/กำกวม คืน null ให้ขึ้นเตือนตามเดิม)
+  var a = _prNorm(n); if(!a) return null;
+  var hit=null, many=false;
+  (_prEmployees||[]).forEach(function(e){
+    var b = _prNorm(e.nickname); if(!b) return;
+    if(a===b || a.indexOf(b)===0 || b.indexOf(a)===0){
+      if(hit && hit.id!==e.id) many=true; else hit=e;
+    }
+  });
+  return many ? null : hit;
 }
 function thMonthLabel(ym){
   var thM=['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
