@@ -72,6 +72,11 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
 .lb .dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.35)}
 .lb .dots i.on{background:#fff}
 .spin{text-align:center;padding:34px 0;color:#64748b;font-size:14px}
+.tels{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:9px}
+.tels a{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid #0f766e;
+        color:#0f766e;font-weight:700;font-size:14.5px;padding:9px 16px;border-radius:999px;
+        text-decoration:none;letter-spacing:.3px}
+.tels a:active{background:#0f766e;color:#fff}
 </style>
 </head>
 <body>
@@ -127,8 +132,8 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
   </div>
 
   <div class="foot">
-    มีข้อสงสัยเรื่องการจัดส่ง ติดต่อร้านได้เลยครับ
-    <span id="telWrap" class="hide"><br><a href="#" id="shopTel">📞 โทรหาร้าน</a></span>
+    มีข้อสงสัยเรื่องการจัดส่ง โทรหาร้านได้เลยครับ
+    <div class="tels" id="telWrap"></div>
   </div>
 </div>
 
@@ -145,7 +150,8 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
 <script>
 var SB_URL='https://hfystbdqjhftrlelmkjm.supabase.co';
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmeXN0YmRxamhmdHJsZWxta2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTc3MDUsImV4cCI6MjA5NDczMzcwNX0.cyRCwh0G6ArSevhsKa6kmPnYhLRRJYrxhlH0ED_JJaE';
-var SHOP_TEL='';   /* ใส่เบอร์ร้านตรงนี้ เช่น '0812345678' — ถ้าเว้นว่างปุ่มโทรจะไม่โชว์ */
+/* เบอร์ร้าน — เพิ่ม/ลบได้ในลิสต์นี้ ถ้าลิสต์ว่างปุ่มโทรจะไม่โชว์ */
+var SHOP_TELS=['094-3574321','092-6656358'];
 var db=null;
 var TH_MON=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 var _cur={bill:'',key:'',token:''};
@@ -349,7 +355,9 @@ setInterval(function(){
 
 /* เริ่มทำงาน */
 (function(){
-  if(SHOP_TEL){ $('shopTel').href='tel:'+SHOP_TEL; show('telWrap',true); }
+  $('telWrap').innerHTML=(SHOP_TELS||[]).map(function(t){
+    return '<a href="tel:'+String(t).replace(/[^0-9+]/g,'')+'">📞 '+esc(t)+'</a>';
+  }).join('');
   var b=qs('b')||qs('bill'), t=qs('t'), k=qs('k');
   if(b && (t||k)) go(b,k,t,false);
   else if(b){ $('fBill').value=b; showForm(''); }
