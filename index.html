@@ -175,7 +175,9 @@ textarea{min-height:72px;resize:vertical}
   <div class="modal-sheet" style="text-align:center;padding:32px 24px">
     <div style="font-size:56px;margin-bottom:12px">✅</div>
     <div style="font-size:20px;font-weight:800;color:var(--green);margin-bottom:8px" id="successTitle">บันทึกข้อมูลสำเร็จ</div>
-    <div style="font-size:14px;color:var(--t2);margin-bottom:24px;line-height:1.6" id="successMsg">ข้อมูลถูกบันทึกเรียบร้อยแล้ว</div>
+    <div style="font-size:14px;color:var(--t2);margin-bottom:20px;line-height:1.6" id="successMsg">ข้อมูลถูกบันทึกเรียบร้อยแล้ว</div>
+    <button class="btn btn-blue" id="successShareBtn" style="display:none;max-width:280px;margin:0 auto 10px" onclick="shareTrackLink(window._successBill)">📤 ส่งลิงก์ติดตามให้ลูกค้า</button>
+    <div id="successShareHint" style="display:none;font-size:11.5px;color:var(--t3);margin-bottom:14px">ลูกค้ากดลิงก์แล้วเห็นชื่อ รูปตอนส่ง และพิกัดหน้างานได้ทันที</div>
     <button class="btn btn-primary" onclick="closeSuccessModal()" style="max-width:200px;margin:0 auto">ตกลง</button>
   </div>
 </div>
@@ -3062,7 +3064,7 @@ function saveStep2(){
   tgDeliverySuccess(records[idx]); // ✅ แจ้ง "จัดส่งสำเร็จ" เข้ากลุ่ม + ปิดคิวจอง
   tgPenaltyAlert(records[idx]); // ⚠️ แจ้งเตือนเฉพาะกรณีหัก 50% (แยกข้อความ)
   closeStep2(); renderPending(); updatePendingBadge();
-  showSuccess('บันทึกข้อมูลสำเร็จแล้ว', 'บิล '+records[idx].bill+' ส่งสินค้าเรียบร้อยแล้ว 🎉');
+  showSuccess('บันทึกข้อมูลสำเร็จแล้ว', 'บิล '+records[idx].bill+' ส่งสินค้าเรียบร้อยแล้ว 🎉', records[idx].bill);
 }
 
 // ==================== HISTORY ====================
@@ -3261,6 +3263,7 @@ function showDetail(id){
     html += '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-ghost" style="flex:1;color:var(--blue)" onclick="adminAddPhotos('+r.id+',\'before\')">➕ เพิ่มรูปก่อน</button><button class="btn btn-ghost" style="flex:1;color:var(--blue)" onclick="adminAddPhotos('+r.id+',\'after\')">➕ เพิ่มรูปหลัง</button></div>';
     html += '<button class="btn btn-ghost" style="margin-top:8px;margin-bottom:6px" onclick="openEditModal('+r.id+');closeDetail()">✏️ แก้ไขข้อมูลบิล</button>';
   }
+  html += '<button class="btn btn-ghost" style="margin-top:8px;color:var(--blue)" onclick="shareTrackLink(\''+String(r.bill).replace(/'/g,"")+'\')">🔗 ส่งลิงก์ติดตามให้ลูกค้า</button>';
   html += '<div style="display:flex;gap:10px;margin-top:8px">'
     +'<button class="btn btn-secondary" onclick="closeDetail()">ปิด</button>'
     +'<button class="btn btn-secondary" style="flex:0;padding:10px 14px;color:var(--red);font-size:13px" onclick="promptDel('+r.id+');closeDetail()">⚠️ ยกเลิกบิล</button>'
@@ -3270,12 +3273,76 @@ function showDetail(id){
   document.getElementById('detailModal').classList.add('show');
 }
 function openViewPhoto(i){ if(window._viewPhotos&&window._viewPhotos.length) openLboxArr(window._viewPhotos, i); }
+
+// ==================== ลิงก์ติดตามสำหรับลูกค้า ====================
+// สร้างลิงก์ track.html แบบมีโทเคน (ลูกค้าเปิดได้เลย ไม่ต้องกรอก 4 ตัวท้าย)
+async function buildTrackUrl(bill){
+  var base = location.href.replace(/[^\/]*$/, '') + 'track.html';
+  var tok = '';
+  try{
+    await ensureSession();
+    var r = await db.rpc('track_token', {p_bill: bill});
+    if(!r.error && r.data) tok = r.data;
+  }catch(e){ console.warn('track_token', e); }
+  return base + '?b=' + encodeURIComponent(bill) + (tok ? ('&t=' + tok) : '');
+}
+async function shareTrackLink(bill){
+  if(!bill){ toast('err','บิลนี้ไม่มีเลขบิล ส่งลิงก์ไม่ได้'); return; }
+  // ถ้ารูปหลังส่งยังอัปโหลดไม่ขึ้น cloud (ยังเป็น base64) ลูกค้าจะเปิดมาไม่เห็นรูป — กันไว้ก่อน
+  var _r = records.find(function(x){ return String(x.bill)===String(bill); });
+  if(_r && _r.step2Done && (_r.photosAfter||[]).some(function(u){
+       return typeof u==='string' && u.indexOf('data:')===0; })){
+    toast('err','รูปยังอัปโหลดไม่เสร็จ รอสักครู่แล้วกดใหม่ครับ');
+    return;
+  }
+  toast('info','กำลังสร้างลิงก์…');
+  var url = await buildTrackUrl(bill);
+  var text = buildTrackMessage(_r, bill, url);
+  try{
+    if(navigator.share){ await navigator.share({title:'การจัดส่ง บิล '+bill, text:text}); return; }
+  }catch(e){ if(e && e.name==='AbortError') return; }
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('ok','คัดลอกข้อความแล้ว วางส่งให้ลูกค้าได้เลย');
+    return;
+  }catch(e){}
+  try{
+    var ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('ok','คัดลอกข้อความแล้ว วางส่งให้ลูกค้าได้เลย');
+  }catch(e){ prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', text); }
+}
+// ข้อความที่ส่งให้ลูกค้า — เปลี่ยนตามสถานะบิล (ห้ามใส่ค่าเที่ยว/ข้อมูลภายใน)
+function buildTrackMessage(rec, bill, url){
+  var L = [];
+  if(rec && rec.step2Done){
+    L.push('กิจมั่งมีโฮม — ส่งสินค้าเรียบร้อยแล้วครับ 🎉');
+    L.push('บิล ' + bill + (rec.timeArrival ? (' · ถึงหน้างาน ' + rec.timeArrival + ' น.') : ''));
+    L.push('ดูรูปตอนส่งและพิกัดหน้างานได้ที่ลิงก์นี้ครับ');
+  } else if(rec){
+    L.push('กิจมั่งมีโฮม — รถออกส่งสินค้าแล้วครับ 🚚');
+    L.push('บิล ' + bill + (rec.timeOut ? (' · ออกจากร้าน ' + rec.timeOut + ' น.') : ''));
+    L.push('กดลิงก์นี้ดูสถานะได้ตลอดครับ');
+  } else {
+    L.push('กิจมั่งมีโฮม — ติดตามสถานะการจัดส่ง');
+    L.push('บิล ' + bill);
+  }
+  L.push(url);
+  return L.join('\n');
+}
 function closeDetail(){ document.getElementById('detailModal').classList.remove('show'); flushPendingFresh(); }
 
 // ==================== SUCCESS MODAL ====================
-function showSuccess(title, msg){
+function showSuccess(title, msg, bill){
   document.getElementById('successTitle').textContent = title;
   document.getElementById('successMsg').textContent = msg;
+  window._successBill = bill || '';
+  var sb = document.getElementById('successShareBtn');
+  var sh = document.getElementById('successShareHint');
+  if(sb) sb.style.display = bill ? 'block' : 'none';
+  if(sh) sh.style.display = bill ? 'block' : 'none';
   document.getElementById('successModal').classList.add('show');
 }
 function closeSuccessModal(){
