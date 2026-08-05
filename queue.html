@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.5 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.6 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -208,7 +208,11 @@ var _pendingAttach=null;
 var tripMode=false;
 var _cloudSnap={};  // id -> JSON ของบิลตามที่โหลดจาก cloud ล่าสุด (กัน client อัปทับทั้งชุด)
 var _cloudPending=true;
-var _showAllCancel=false;  // กลุ่มยกเลิก: โชว์ 6 ใบล่าสุด กดดูทั้งหมดได้  // ยังไม่ได้ดึงของสดจากคลาวด์ → อย่าเพิ่งโชว์ของเก่าในเครื่อง (กันภาพกระพริบ/บิลที่ปิดไปแล้วโผล่)
+var _showAllCancel=false;  // กลุ่มยกเลิก: โชว์ 6 ใบล่าสุด กดดูทั้งหมดได้
+/* โหลดเร็ว: ดึงเฉพาะบิลที่ต้องแสดงจริง — บิลปิดแล้ว (ส่งสำเร็จ/ยกเลิก) มีรูปแนบฝังมาด้วย
+   ถ้าดึงทั้ง 192 บิลจะได้ก้อน ~20MB โหลด ~5 วิ; ตอนนี้ดึงงานที่ยังเดินอยู่ทั้งหมด + บิลปิดล่าสุด 12 ใบ
+   ส่วนยอดรวมใช้ count() ที่ฝั่งเซิร์ฟเวอร์ (ไม่ต้องโหลดข้อมูลมานับเอง) */
+var _doneTotal=null, _cancelTotal=null, _allCancelLoaded=false;  // ยังไม่ได้ดึงของสดจากคลาวด์ → อย่าเพิ่งโชว์ของเก่าในเครื่อง (กันภาพกระพริบ/บิลที่ปิดไปแล้วโผล่)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
 function def(){ return {bookings:[], store:null, threshold:2, favorites:[]}; }
 function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
@@ -261,7 +265,21 @@ async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config
 async function loadCloud(){
   if(!db){ _cloudPending=false; renderQueue(); return; }
   try{
-    var r=await db.from('bookings').select('data');
+    var CLOSED_FETCH=12;   // บิลปิดแล้วที่ดึงมาเผื่อโชว์ 6 ใบล่าสุด
+    var q=await Promise.all([
+      db.from('bookings').select('data').in('status',['booked','delivering','postponed','onhold']),   // งานที่ยังเดินอยู่ = ต้องครบ
+      db.from('bookings').select('data').eq('status','done').order('created_at',{ascending:false}).limit(CLOSED_FETCH),
+      db.from('bookings').select('data').eq('status','cancel').order('created_at',{ascending:false}).limit(CLOSED_FETCH),
+      db.from('bookings').select('id',{count:'exact',head:true}).eq('status','done'),
+      db.from('bookings').select('id',{count:'exact',head:true}).eq('status','cancel')
+    ]);
+    var r={data:[]};
+    if(q[0]&&q[0].data){
+      r.data=q[0].data.concat((q[1]&&q[1].data)||[]).concat((q[2]&&q[2].data)||[]);
+      _doneTotal=(q[3]&&q[3].count!=null)?q[3].count:null;
+      _cancelTotal=(q[4]&&q[4].count!=null)?q[4].count:null;
+      _allCancelLoaded=(_cancelTotal!=null&&_cancelTotal<=CLOSED_FETCH);
+    }
     if(r&&r.data){
       state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean);
       _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); });
@@ -544,7 +562,22 @@ async function saveBooking(){
   go('Queue');
 }
 function toggleTripMode(on){ tripMode=on; renderQueue(); }
-function toggleAllCancel(){ _showAllCancel=!_showAllCancel; renderQueue(); }
+async function toggleAllCancel(){
+  if(!_showAllCancel && !_allCancelLoaded && db){
+    var btn=document.getElementById('btnAllCancel'); if(btn){ btn.disabled=true; btn.textContent='⏳ กำลังโหลด…'; }
+    try{
+      var r=await db.from('bookings').select('data').eq('status','cancel');
+      if(r&&r.data){
+        var have={}; state.bookings.forEach(function(b){ have[b.id]=1; });
+        r.data.map(function(x){return x.data;}).filter(Boolean).forEach(function(b){
+          if(!have[b.id]){ state.bookings.push(b); _cloudSnap[b.id]=JSON.stringify(b); }
+        });
+        _allCancelLoaded=true;
+      }
+    }catch(e){ console.warn('cancel-all',e); }
+  }
+  _showAllCancel=!_showAllCancel; renderQueue();
+}
 function updateTripCount(){
   var el=document.getElementById('tripCount'); if(!el) return;
   var n=state.bookings.filter(function(b){ if(b.status!=='booked') return false; var c=document.getElementById('chk_'+b.id); return c&&c.checked; }).length;
@@ -627,7 +660,7 @@ function renderQueue(){
   var bs=state.bookings;
   document.getElementById('stBooked').textContent=bs.filter(function(b){return b.status==='booked';}).length;
   document.getElementById('stDeliver').textContent=bs.filter(function(b){return b.status==='delivering';}).length;
-  document.getElementById('stDone').textContent=bs.filter(function(b){return b.status==='done';}).length;
+  document.getElementById('stDone').textContent=(_doneTotal!=null)?_doneTotal:bs.filter(function(b){return b.status==='done';}).length;
   var stale=bs.filter(function(b){return b.status==='booked' && (Date.now()-b.createdAt)>12*3600*1000;});
   var pend=bs.filter(function(b){return b.status==='booked';});
   var banner=document.getElementById('pendingBanner');
@@ -668,23 +701,25 @@ function renderQueue(){
   /* ส่งสำเร็จ = งานที่จบแล้ว ไม่ต้องเลื่อนผ่านทุกวัน → โชว์แค่ 6 ใบล่าสุด ที่เหลือดูที่หน้าประวัติ (แอปหลัก) */
   var DONE_SHOW=6;
   var done=bs.filter(function(b){return b.status==='done';}).sort(function(x,y){return (y.deliveredAt||0)-(x.deliveredAt||0);});
+  var doneTot=(_doneTotal!=null)?_doneTotal:done.length;
   if(done.length){
-    html+='<div class="group-h" style="color:var(--green)">✅ ส่งสำเร็จ ('+done.length+' บิล)'+(done.length>DONE_SHOW?' <span style="font-weight:400;color:var(--t3)">· แสดง '+DONE_SHOW+' ใบล่าสุด</span>':'')+'</div>';
+    html+='<div class="group-h" style="color:var(--green)">✅ ส่งสำเร็จ ('+doneTot+' บิล)'+((doneTot>DONE_SHOW)?' <span style="font-weight:400;color:var(--t3)">· แสดง '+DONE_SHOW+' ใบล่าสุด</span>':'')+'</div>';
     done.slice(0,DONE_SHOW).forEach(function(b){ html+=card(b); });
-    if(done.length>DONE_SHOW){
-      html+='<div style="margin:2px 12px 10px"><a class="btn btn-ghost btn-sm" style="width:100%;text-decoration:none;justify-content:center" href="index.html#history">📋 ดูที่ส่งสำเร็จทั้งหมด '+done.length+' บิล ที่หน้าประวัติ →</a></div>';
+    if(doneTot>DONE_SHOW){
+      html+='<div style="margin:2px 12px 10px"><a class="btn btn-ghost btn-sm" style="width:100%;text-decoration:none;justify-content:center" href="index.html#history">📋 ดูที่ส่งสำเร็จทั้งหมด '+doneTot+' บิล ที่หน้าประวัติ →</a></div>';
     }
   }
   /* ยกเลิก = งานที่จบแล้วเหมือนกัน → โชว์ 6 ใบล่าสุด กดดูทั้งหมดได้ในหน้านี้เลย (ไม่มีในหน้าประวัติแอปหลัก) */
   var CANCEL_SHOW=6;
   var cancelled=bs.filter(function(b){return b.status==='cancel';}).sort(byNew);
+  var cancelTot=(_cancelTotal!=null)?_cancelTotal:cancelled.length;
   if(cancelled.length){
-    var _cMore=cancelled.length-CANCEL_SHOW;
-    html+='<div class="group-h" style="color:var(--t3)">❌ ยกเลิก ('+cancelled.length+' บิล)'+((_cMore>0&&!_showAllCancel)?' <span style="font-weight:400">· แสดง '+CANCEL_SHOW+' ใบล่าสุด</span>':'')+'</div>';
+    var _cMore=cancelTot-CANCEL_SHOW;
+    html+='<div class="group-h" style="color:var(--t3)">❌ ยกเลิก ('+cancelTot+' บิล)'+((_cMore>0&&!_showAllCancel)?' <span style="font-weight:400">· แสดง '+CANCEL_SHOW+' ใบล่าสุด</span>':'')+'</div>';
     (_showAllCancel?cancelled:cancelled.slice(0,CANCEL_SHOW)).forEach(function(b){ html+=card(b); });
     if(_cMore>0){
-      html+='<div style="margin:2px 12px 10px"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center" onclick="toggleAllCancel()">'+
-            (_showAllCancel?'▲ ย่อกลับ · แสดงแค่ '+CANCEL_SHOW+' ใบล่าสุด':'▼ ดูบิลที่ยกเลิกทั้งหมด ('+cancelled.length+' บิล)')+'</button></div>';
+      html+='<div style="margin:2px 12px 10px"><button class="btn btn-ghost btn-sm" id="btnAllCancel" style="width:100%;justify-content:center" onclick="toggleAllCancel()">'+
+            (_showAllCancel?'▲ ย่อกลับ · แสดงแค่ '+CANCEL_SHOW+' ใบล่าสุด':'▼ ดูบิลที่ยกเลิกทั้งหมด ('+cancelTot+' บิล)')+'</button></div>';
     }
   }
   list.innerHTML=html||'<div class="empty">ไม่มีคิว</div>';
