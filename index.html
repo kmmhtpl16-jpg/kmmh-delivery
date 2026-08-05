@@ -3295,7 +3295,7 @@ async function shareTrackLink(bill){
     toast('err','รูปยังอัปโหลดไม่เสร็จ รอสักครู่แล้วกดใหม่ครับ');
     return;
   }
-  toast('info','กำลังสร้างลิงก์…');
+  toast('ok','กำลังสร้างลิงก์…');   /* ไม่มีคลาส .toast.info ใน CSS — ใช้ ok */
   var url = await buildTrackUrl(bill);
   var text = buildTrackMessage(_r, bill, url);
   // คัดลอกอย่างเดียว ไม่เรียกเมนูแชร์ของเครื่อง (บนคอมมันเด้งหน้าต่าง Share ที่ใช้ไม่ได้)
