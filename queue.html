@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.1 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.2 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -207,6 +207,7 @@ var pendingDest=null;
 var _pendingAttach=null;
 var tripMode=false;
 var _cloudSnap={};  // id -> JSON ของบิลตามที่โหลดจาก cloud ล่าสุด (กัน client อัปทับทั้งชุด)
+var _cloudPending=true;  // ยังไม่ได้ดึงของสดจากคลาวด์ → อย่าเพิ่งโชว์ของเก่าในเครื่อง (กันภาพกระพริบ/บิลที่ปิดไปแล้วโผล่)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
 function def(){ return {bookings:[], store:null, threshold:2, favorites:[]}; }
 function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
@@ -257,8 +258,18 @@ function save(){
 }
 async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; _qbCfg=c; state.favorites=Array.isArray(c.favorites)?c.favorites:(state.favorites||[]); renderFavBar(); if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 async function loadCloud(){
-  if(!db) return;
-  try{ var r=await db.from('bookings').select('data'); if(r&&r.data){ state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean); _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); }); renderQueue(); } }catch(e){ console.warn('load',e); }
+  if(!db){ _cloudPending=false; renderQueue(); return; }
+  try{
+    var r=await db.from('bookings').select('data');
+    if(r&&r.data){
+      state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean);
+      _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); });
+      /* เก็บสำเนาสดไว้ในเครื่องด้วย — เดิมไม่เคยเขียนทับ ทำให้เปิดครั้งหน้าเห็นของเก่าค้างก่อนเสมอ */
+      try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
+    }
+  }catch(e){ console.warn('load',e); }
+  _cloudPending=false;
+  renderQueue();
 }
 var QUEUE_CHAT='-5142584793';
 function sendTelegram(text,chat_id){
@@ -594,6 +605,13 @@ function clusterBooked(arr, km){
 }
 function renderQueue(){
   state.threshold=state.threshold||2;
+  if(_cloudPending){
+    var _pl=document.getElementById('queueList');
+    if(_pl) _pl.innerHTML='<div class="empty">⏳ กำลังโหลดคิวล่าสุด…</div>';
+    ['stBooked','stDeliver','stDone'].forEach(function(id){ var e=document.getElementById(id); if(e) e.textContent='–'; });
+    var _pb=document.getElementById('pendingBanner'); if(_pb) _pb.classList.remove('show');
+    return;
+  }
   checkDueBookings();
   var list=document.getElementById('queueList');
   var bs=state.bookings;
@@ -743,6 +761,7 @@ function resetAll(){
   if(state.store){ var sb=document.getElementById('fStoreBtn'); sb.classList.add('has'); sb.textContent='🏠 ตั้งจุดร้านแล้ว ('+state.store.lat.toFixed(4)+', '+state.store.lng.toFixed(4)+')'; }
   initDB();
   renderQueue();
+  setTimeout(function(){ if(_cloudPending){ _cloudPending=false; renderQueue(); } }, 4000);
   (async function(){ await ensureSession(); loadCloud(); loadConfig(); })();
 })();
 </script>
