@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.2 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.3 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -264,8 +264,16 @@ async function loadCloud(){
     if(r&&r.data){
       state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean);
       _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); });
-      /* เก็บสำเนาสดไว้ในเครื่องด้วย — เดิมไม่เคยเขียนทับ ทำให้เปิดครั้งหน้าเห็นของเก่าค้างก่อนเสมอ */
-      try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
+      /* เก็บสำเนาสดไว้ในเครื่อง (ไว้โชว์ชั่วคราวตอนเน็ตช้า/หลุด)
+         ⚠️ เก็บทั้งชุดไม่ได้ — รูปแนบ (attach) ทำให้ข้อมูลโต ~20MB เกินโควตา localStorage (5MB)
+         แล้ว setItem จะ throw เงียบๆ ทำให้สำเนาในเครื่องค้างของเก่าเป็นปีๆ
+         → ตัดรูปแนบออก + เก็บแค่ 300 บิลล่าสุด, ถ้ายังไม่พอให้ลบทิ้งไปเลย ดีกว่าโชว์ของเก่า */
+      try{
+        var _slim={ store:state.store, threshold:state.threshold, favorites:state.favorites,
+          bookings:state.bookings.slice().sort(function(x,y){ return (y.createdAt||0)-(x.createdAt||0); })
+            .slice(0,300).map(function(b){ var c=Object.assign({},b); delete c.attach; return c; }) };
+        localStorage.setItem(KEY, JSON.stringify(_slim));
+      }catch(e){ try{ localStorage.removeItem(KEY); }catch(_e){} }
     }
   }catch(e){ console.warn('load',e); }
   _cloudPending=false;
