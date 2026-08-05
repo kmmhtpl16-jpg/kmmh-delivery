@@ -1531,6 +1531,8 @@ async function startApp(){
   updatePendingBadge();
   populateMonths();
   checkHandoff();
+  /* ลิงก์จากหน้าจองคิว index.html#history → เปิดหน้าประวัติให้เลย */
+  try{ if(location.hash==='#history'){ history.replaceState(null,'',location.pathname); showPage('history'); } }catch(e){}
   checkDraftOnLoad();
   scheduleDailySummary(); // Telegram daily summary at 17:00
   // Load fuel from cloud

@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.3 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.4 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -663,8 +663,16 @@ function renderQueue(){
   if(postponed.length){ html+='<div class="group-h" style="color:#9a3412">📅 นัดส่งล่วงหน้า · คนละวัน ('+postponed.length+' บิล)</div>'; postponed.forEach(function(b){ html+=card(b); }); }
   var onhold=bs.filter(function(b){return b.status==='onhold';}).sort(byNew);
   if(onhold.length){ html+='<div class="group-h" style="color:#5b21b6">⏸️ ยังไม่มีกำหนดส่ง · หน้างานยังไม่พร้อมรับ ('+onhold.length+' บิล)</div>'; onhold.forEach(function(b){ html+=card(b); }); }
+  /* ส่งสำเร็จ = งานที่จบแล้ว ไม่ต้องเลื่อนผ่านทุกวัน → โชว์แค่ 6 ใบล่าสุด ที่เหลือดูที่หน้าประวัติ (แอปหลัก) */
+  var DONE_SHOW=6;
   var done=bs.filter(function(b){return b.status==='done';}).sort(function(x,y){return (y.deliveredAt||0)-(x.deliveredAt||0);});
-  if(done.length){ html+='<div class="group-h" style="color:var(--green)">✅ ส่งสำเร็จ ('+done.length+' บิล)</div>'; done.forEach(function(b){ html+=card(b); }); }
+  if(done.length){
+    html+='<div class="group-h" style="color:var(--green)">✅ ส่งสำเร็จ ('+done.length+' บิล)'+(done.length>DONE_SHOW?' <span style="font-weight:400;color:var(--t3)">· แสดง '+DONE_SHOW+' ใบล่าสุด</span>':'')+'</div>';
+    done.slice(0,DONE_SHOW).forEach(function(b){ html+=card(b); });
+    if(done.length>DONE_SHOW){
+      html+='<div style="margin:2px 12px 10px"><a class="btn btn-ghost btn-sm" style="width:100%;text-decoration:none;justify-content:center" href="index.html#history">📋 ดูที่ส่งสำเร็จทั้งหมด '+done.length+' บิล ที่หน้าประวัติ →</a></div>';
+    }
+  }
   var cancelled=bs.filter(function(b){return b.status==='cancel';}).sort(byNew);
   if(cancelled.length){ html+='<div class="group-h" style="color:var(--t3)">❌ ยกเลิก ('+cancelled.length+' บิล)</div>'; cancelled.forEach(function(b){ html+=card(b); }); }
   list.innerHTML=html||'<div class="empty">ไม่มีคิว</div>';
