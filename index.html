@@ -1328,6 +1328,11 @@ async function refreshFromCloud(){
       if(freshJSON !== JSON.stringify(records)){             // mitigation 2: อัปเดตเฉพาะตอนเปลี่ยนจริง
         if(isUserBusy()) _pendingFresh = fresh;             // mitigation 3: ผู้ใช้ไม่ว่าง → พักไว้ก่อน
         else applyFresh(fresh);
+      } else {
+        /* ข้อมูลเท่าเดิม แต่หน้าที่เปิดอยู่อาจถูกวาดไปตอน records ยังว่าง (เช่น กดแท็บรายงานทันทีที่เปิดแอป
+           → เห็นบิล 0 / ค่าเที่ยว ฿0 ค้าง เพราะไม่มีอะไรสั่งวาดซ้ำ) → วาดหน้าที่เปิดอยู่ใหม่เสมอ */
+        records = fresh;
+        if(!isUserBusy()) rerenderActive();
       }
     }
   }catch(e){
@@ -1530,6 +1535,7 @@ async function startApp(){
   updateTodaySub();
   updatePendingBadge();
   populateMonths();
+  rerenderActive();   // กันหน้าที่เปิดอยู่ค้างเลข 0 ตอนโหลดเสร็จ
   checkHandoff();
   /* ลิงก์จากหน้าจองคิว index.html#history → เปิดหน้าประวัติให้เลย */
   try{ if(location.hash==='#history'){ history.replaceState(null,'',location.pathname); showPage('history'); } }catch(e){}
