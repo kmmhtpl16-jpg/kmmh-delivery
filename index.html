@@ -3298,21 +3298,31 @@ async function shareTrackLink(bill){
   toast('info','กำลังสร้างลิงก์…');
   var url = await buildTrackUrl(bill);
   var text = buildTrackMessage(_r, bill, url);
+  // คัดลอกอย่างเดียว ไม่เรียกเมนูแชร์ของเครื่อง (บนคอมมันเด้งหน้าต่าง Share ที่ใช้ไม่ได้)
+  if(await copyText(text)){
+    toast('ok','✅ คัดลอกแล้ว วางในแชท LINE ลูกค้าได้เลย');
+  }else{
+    prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', text);
+  }
+}
+async function copyText(text){
   try{
-    if(navigator.share){ await navigator.share({title:'การจัดส่ง บิล '+bill, text:text}); return; }
-  }catch(e){ if(e && e.name==='AbortError') return; }
-  try{
-    await navigator.clipboard.writeText(text);
-    toast('ok','คัดลอกข้อความแล้ว วางส่งให้ลูกค้าได้เลย');
-    return;
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
   }catch(e){}
   try{
     var ta=document.createElement('textarea');
-    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
-    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    ta.value=text;
+    ta.setAttribute('readonly','');
+    ta.style.position='fixed'; ta.style.top='0'; ta.style.left='0'; ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, text.length);   /* iOS ต้อง setSelectionRange */
+    var ok=document.execCommand('copy');
     document.body.removeChild(ta);
-    toast('ok','คัดลอกข้อความแล้ว วางส่งให้ลูกค้าได้เลย');
-  }catch(e){ prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', text); }
+    return !!ok;
+  }catch(e){ return false; }
 }
 // ข้อความที่ส่งให้ลูกค้า — เปลี่ยนตามสถานะบิล (ห้ามใส่ค่าเที่ยว/ข้อมูลภายใน)
 function buildTrackMessage(rec, bill, url){
