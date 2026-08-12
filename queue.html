@@ -255,11 +255,60 @@ function save(){
       if(_cloudSnap[b.id]!==j){ rows.push({id:b.id, status:b.status, created_at:b.createdAt, data:b}); js.push(j); }
     });
     if(rows.length){
-      db.from('bookings').upsert(rows,{onConflict:'id'}).then(function(){
+      return db.from('bookings').upsert(rows,{onConflict:'id'}).then(function(){
         rows.forEach(function(r,i){ _cloudSnap[r.id]=js[i]; });
       },function(e){ console.warn('save',e); });
     }
   }
+  return Promise.resolve();
+}
+
+// ==================== ลิงก์ติดตามสำหรับลูกค้า (ส่งได้ตั้งแต่ตอนจอง) ====================
+// หน้า track.html อ่านสถานะจากตาราง bookings ได้เลย ไม่ต้องรอให้บิลเข้าแอปจัดส่งก่อน
+// stage 'booked' = ลูกค้าเห็นภาพ "กำลังจัดสินค้า" (status-wait.gif)
+async function buildTrackUrl(bill){
+  var base = location.href.replace(/[?#].*$/,'').replace(/[^\/]*$/, '') + 'track.html';
+  var tok = '';
+  try{
+    await ensureSession();
+    var r = await db.rpc('track_token', {p_bill: bill});
+    if(!r.error && r.data) tok = r.data;
+  }catch(e){ console.warn('track_token', e); }
+  return base + '?b=' + encodeURIComponent(bill) + (tok ? ('&t=' + tok) : '');
+}
+async function copyText(text){
+  try{ if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); return true; } }catch(e){}
+  try{
+    var ta=document.createElement('textarea');
+    ta.value=text; ta.setAttribute('readonly','');
+    ta.style.position='fixed'; ta.style.top='0'; ta.style.left='0'; ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, text.length);
+    var ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  }catch(e){ return false; }
+}
+// ข้อความให้ลูกค้า — ห้ามใส่ข้อมูลภายใน (ค่าเที่ยว/เบอร์คนขับ)
+function buildBookedMessage(b, url){
+  var L=['กิจมั่งมีโฮม — รับออเดอร์แล้วครับ 📦'];
+  L.push('บิล ' + b.bill + (b.customer ? (' · ' + b.customer) : ''));
+  var d = b.newDate || b.deliveryDate;
+  if(b.status==='onhold') L.push('กำลังจัดสินค้าอยู่ครับ นัดวันส่งอีกครั้ง');
+  else if(d) L.push('กำหนดส่ง ' + fmtDate(d));
+  L.push('กดลิงก์นี้ดูสถานะได้ตลอดครับ');
+  L.push(url);
+  return L.join('\n');
+}
+async function qShareTrackLink(bill){
+  var b = state.bookings.filter(function(x){ return String(x.bill)===String(bill); })[0];
+  if(!b){ alert('ไม่พบบิลนี้ในคิว'); return; }
+  if(b.type && b.type!=='deliver'){ alert('งานส่งคลัง/รับสินค้า/UPK ไม่ใช่ลูกค้า — ไม่ต้องส่งลิงก์ครับ'); return; }
+  await save();                       // ให้บิลขึ้นคลาวด์ก่อน ไม่งั้นลูกค้าเปิดมาเจอ "ไม่พบบิล"
+  var url = await buildTrackUrl(bill);
+  var text = buildBookedMessage(b, url);
+  if(await copyText(text)) alert('✅ คัดลอกแล้ว — วางในแชท LINE ลูกค้าได้เลย');
+  else prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', text);
 }
 async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; _qbCfg=c; state.favorites=Array.isArray(c.favorites)?c.favorites:(state.favorites||[]); renderFavBar(); if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 async function loadCloud(){
@@ -529,6 +578,7 @@ async function saveBooking(){
     bill=autoRef(type);
   }
   state.threshold=parseFloat(document.getElementById('fThreshold').value)||2;
+  var _justBooked=null;
   state.bookings.unshift({
     id:Date.now().toString(), bill:bill, type:type,
     customer:document.getElementById('fCustomer').value.trim(),
@@ -543,7 +593,8 @@ async function saveBooking(){
     createdAt:Date.now(),
     drvLat:null, drvLng:null, gap:null
   });
-  save();
+  _justBooked=state.bookings[0];
+  var _savePromise=save();
   (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var _hd=(nb.status==='onhold')?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':((nb.status==='postponed')?('📅 <b>จองใหม่ · นัดส่งล่วงหน้า '+fmtDate(nb.newDate)+'</b> · '):'🟡 <b>จองใหม่ · ส่งวันนี้</b> · '); var m=_hd+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
@@ -558,7 +609,18 @@ async function saveBooking(){
   var _dv=document.getElementById('fDeliveryDate'); if(_dv){ _dv.value=''; _dv.disabled=false; _dv.style.opacity=1; }
   var _dvl=document.getElementById('fDeliveryDateLabel'); if(_dvl) _dvl.style.opacity=1;
   var _fs=document.getElementById('fBillStatus'); if(_fs) _fs.textContent='';
-  alert('บันทึกการจองเรียบร้อย ✓');
+  // งานส่งลูกค้า = ถามเลยว่าจะส่งลิงก์ติดตามให้ลูกค้าไหม (ลูกค้าจะเห็นภาพ "กำลังจัดสินค้า")
+  if(_justBooked && _justBooked.bill && (_justBooked.type||'deliver')==='deliver'){
+    try{ await _savePromise; }catch(e){}
+    var _url = await buildTrackUrl(_justBooked.bill);
+    var _txt = buildBookedMessage(_justBooked, _url);
+    if(confirm('บันทึกการจองเรียบร้อย ✓\n\nส่งลิงก์ติดตามให้ลูกค้าเลยไหม?\nลูกค้าจะเห็นสถานะ "กำลังจัดสินค้า" ทันที')){
+      if(await copyText(_txt)) alert('✅ คัดลอกแล้ว — วางในแชท LINE ลูกค้าได้เลย');
+      else prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', _txt);
+    }
+  }else{
+    alert('บันทึกการจองเรียบร้อย ✓');
+  }
   go('Queue');
 }
 function toggleTripMode(on){ tripMode=on; renderQueue(); }
@@ -748,6 +810,9 @@ function card(b,showChk,together){
   }
   h+='<div style="font-size:11px;color:var(--t3);margin-top:6px">แตะดูรายละเอียด / แผนที่ ›</div></div>';
   h+='<div class="acts">';
+  if(b.bill && (b.type||'deliver')==='deliver' && b.status!=='cancel' && b.status!=='done'){
+    h+='<button class="btn btn-ghost btn-sm" style="color:var(--blue)" onclick="event.stopPropagation();qShareTrackLink(\''+String(b.bill).replace(/'/g,'')+'\')">🔗 ส่งลิงก์ติดตามให้ลูกค้า</button>';
+  }
   if(b.status==='booked'){ h+='<button class="btn btn-blue btn-sm" onclick="startDelivery(\''+b.id+'\')">🚚 ออกส่ง</button>'; h+='<button class="btn btn-ghost btn-sm" onclick="openCancelPopup(\''+b.id+'\')">ยกเลิก / เลื่อน</button>'; }
   else if(b.status==='delivering'){ h+='<button class="btn btn-green btn-sm" onclick="askDeliveryLocation(\''+b.id+'\')">✓ ถึงแล้ว / ส่งสำเร็จ</button>'; }
   else if(b.status==='cancel'||b.status==='postponed'||b.status==='onhold'){ h+='<button class="btn btn-ghost btn-sm" onclick="restoreBooking(\''+b.id+'\')">↩️ กลับมารอจัดส่ง</button>'; }
