@@ -742,7 +742,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.10</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.11</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -879,7 +879,7 @@ async function claimNotify(id, kind){
 
 // แจ้งเตือนเมื่อรถออกส่งสินค้า (ส่งครั้งเดียวต่อบิล — เช็กที่ DB ทุกเครื่องเห็นตรงกัน)
 async function tgNewBill(rec){
-  var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า';
+  var typeLabel = typeLabelOf(rec);
   var team = rec.driver + (rec.helpers&&rec.helpers.length?' + '+rec.helpers.join(', '):'');
   var NL = '\n';
   var dp = destParts(rec.dest);
@@ -900,7 +900,7 @@ async function tgNewBill(rec){
 // แจ้งเตือนเมื่อจัดส่งสำเร็จ (ส่งครั้งเดียวต่อบิล) + อัปเดตคิวจองเป็น "ส่งสำเร็จ"
 async function tgDeliverySuccess(rec){
   if(!rec) return;
-  var typeLabel = rec.deliveryType==='receive'?'📦 รับสินค้า':rec.deliveryType==='upk'?'🏢 UPK':rec.deliveryType==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า';
+  var typeLabel = typeLabelOf(rec);
   var NL = '\n';
   var dp = destParts(rec.dest);
   // ลิงก์แผนที่ปลายทาง = พิกัดที่พนักงานบันทึกตอนถึงจริง (gpsArrival) ถ้าไม่มีค่อยใช้ที่จองไว้
@@ -1124,9 +1124,10 @@ function sendMonthlySummary(ym){
   var active = recs.filter(function(r){ return (r.status||'active')==='active'; });
   var pending = recs.filter(function(r){ return r.status==='pending'; });
   var cancelled = recs.filter(function(r){ return r.status==='cancelled'; });
-  var cReceive=active.filter(function(r){return r.deliveryType==='receive';}).length;
-  var cUpk=active.filter(function(r){return r.deliveryType==='upk';}).length;
-  var cDeliver=active.length-cReceive-cUpk;
+  var cReceive=active.filter(function(r){return delivTypeOf(r)==='receive';}).length;
+  var cUpk=active.filter(function(r){return delivTypeOf(r)==='upk';}).length;
+  var cKlang=active.filter(function(r){return delivTypeOf(r)==='klang';}).length;
+  var cDeliver=active.length-cReceive-cUpk-cKlang;
   var tripSum=active.reduce(function(s,r){return s+(+r.tripTotal||0);},0);
   var byPerson={};
   function _ens(n){ if(!byPerson[n]) byPerson[n]={drive:0,help:0,pay:0}; return byPerson[n]; }
@@ -1139,7 +1140,7 @@ function sendMonthlySummary(ym){
   var msg='🗓️ สรุปกิจกรรมประจำเดือน'+NL+'📅 '+label+NL+SEP+NL;
   msg+='📦 งานทั้งหมด: '+recs.length+' บิล'+NL;
   msg+='   ✅ สำเร็จ '+active.length+' · ⏳ ค้าง '+pending.length+' · ❌ ยกเลิก '+cancelled.length+NL;
-  msg+='🚚 ส่งลูกค้า '+cDeliver+' · 📦 รับสินค้า '+cReceive+' · 🏢 UPK '+cUpk+NL+SEP+NL;
+  msg+='🚚 ส่งลูกค้า '+cDeliver+' · 📦 รับสินค้า '+cReceive+' · 🏢 UPK '+cUpk+' · 🏭 ส่งคลัง '+cKlang+NL+SEP+NL;
   msg+='💰 ค่าเที่ยว/ค่าแรงรวม: ฿'+Math.round(tripSum).toLocaleString()+NL;
   var names=Object.keys(byPerson).sort(function(a,b){return byPerson[b].pay-byPerson[a].pay;});
   if(names.length){ msg+='👤 ค่าแรงรายคน:'+NL; names.forEach(function(nm){ var o=byPerson[nm]; var parts=[]; if(o.drive)parts.push('ขับ '+o.drive); if(o.help)parts.push('ผู้ช่วย '+o.help); msg+='   • '+nm+' — '+parts.join(', ')+' · ฿'+Math.round(o.pay).toLocaleString()+NL; }); }
@@ -1424,6 +1425,7 @@ function recToDb(r){
     id: r.id, date: r.date, bill: r.bill, car: r.car,
     driver: r.driver, helpers: r.helpers||[],
     dest: r.dest||'',
+    delivery_type: r.deliveryType||'deliver',
     brick_on: r.brickOn||false, brick_qty: r.brickQty||0,
     brick_total: r.brickTotal||0, brick_pp: r.brickPP||0,
     crane: r.crane||false, labor: r.labor||false, extra_pp: r.extraPP||0,
@@ -1442,12 +1444,27 @@ function recToDb(r){
   };
 }
 
+// ประเภทงาน: อ่านจาก record ถ้าไม่มีให้เดาจาก prefix เลขบิล (บิลเก่าที่ยังไม่มี delivery_type ใน DB)
+function delivTypeOf(r){
+  var t = r && r.deliveryType;
+  if(t && t!=='deliver') return t;
+  var b = (r && r.bill) ? String(r.bill) : '';
+  var bu = b.toUpperCase();
+  if(b.indexOf('ส่งคลัง')===0) return 'klang';
+  if(b.indexOf('รับสินค้า')===0 || bu.indexOf('RCV')===0) return 'receive';
+  if(bu.indexOf('UPK')===0) return 'upk';
+  return t||'deliver';
+}
+function typeLabelOf(r){ var t=delivTypeOf(r); return t==='receive'?'📦 รับสินค้า':(t==='upk'?'🏢 UPK':(t==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า')); }
+function typeBadgeOf(r){ var t=delivTypeOf(r); return t==='receive'?'b-purple':(t==='upk'?'b-blue':(t==='klang'?'b-green':'b-orange')); }
+
 // Convert DB row → app record
 function dbToRec(row){
   return {
     id: row.id, date: row.date, bill: row.bill, car: row.car,
     driver: row.driver, helpers: row.helpers||[],
     dest: row.dest||'',
+    deliveryType: row.delivery_type||'',
     brickOn: row.brick_on, brickQty: row.brick_qty,
     brickTotal: row.brick_total, brickPP: row.brick_pp,
     crane: row.crane, labor: row.labor, extraPP: row.extra_pp,
@@ -1848,12 +1865,14 @@ function calcAll(){
   const crane = document.getElementById('chipCrane').classList.contains('on');
   const labor = document.getElementById('chipLabor').classList.contains('on');
   const nAll = 1+hlpArr.length;
-  const brickTotal = brickQty*0.25;
-  const brickPP = nAll>0 ? brickTotal/nAll : 0;
-  const extraPP = (crane?10:0)+(labor?5:0);
   const destVal = document.getElementById('fDest').value.toUpperCase();
   const delivTypeCalc = document.getElementById('fDeliveryType').value;
-  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive' || delivTypeCalc === 'klang';
+  // งานส่งคลัง = ไม่มีเงินใดๆ ทั้งสิ้น (ค่าเที่ยวพื้นฐาน + โบนัสอิฐ/เครน/แรงงาน = 0)
+  const isKlang = delivTypeCalc === 'klang';
+  const isUPK = destVal.includes('UPK') || delivTypeCalc === 'upk' || delivTypeCalc === 'receive' || isKlang;
+  const brickTotal = isKlang ? 0 : brickQty*0.25;
+  const brickPP = (isKlang || nAll<=0) ? 0 : brickTotal/nAll;
+  const extraPP = isKlang ? 0 : (crane?10:0)+(labor?5:0);
   const baseDrv = isUPK ? 0 : 40;
   const baseHlp = isUPK ? 0 : 20;
   const drvTotal = baseDrv+brickPP+extraPP;
@@ -1864,13 +1883,14 @@ function calcAll(){
   const detail = document.getElementById('bonusDetail');
   if(!drv){ card.style.display='none'; return; }
   let h = '';
-  if(isUPK){ h += '<div style="background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue);margin-bottom:6px">🏭 งานส่งคลัง/รับสินค้า/UPK — ไม่คิดค่าเที่ยวพื้นฐาน</div>'; }
-  if(brickOn&&brickQty>0){
+  if(isKlang){ h += '<div style="background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue);margin-bottom:6px">🏭 งานส่งคลัง — ไม่คิดค่าเที่ยวและไม่คิดโบนัสใดๆ (฿0)</div>'; }
+  else if(isUPK){ h += '<div style="background:var(--blue-bg);border:0.5px solid #b3cff0;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue);margin-bottom:6px">🏭 งานรับสินค้า/UPK — ไม่คิดค่าเที่ยวพื้นฐาน</div>'; }
+  if(!isKlang && brickOn&&brickQty>0){
     h += '<div class="bonus-row"><span>🧱 อิฐ '+brickQty.toLocaleString()+' ก้อน×0.25฿</span><span>฿'+brickTotal.toFixed(2)+'</span></div>';
     h += '<div class="bonus-row" style="font-size:12px;color:var(--t3)"><span>÷'+nAll+'คน=ต่อคน</span><span>฿'+brickPP.toFixed(2)+'</span></div>';
   }
-  if(crane) h += '<div class="bonus-row"><span>🏗 โบนัสเครน</span><span>+฿10/คน</span></div>';
-  if(labor) h += '<div class="bonus-row"><span>💪 โบนัสแรงงาน</span><span>+฿5/คน</span></div>';
+  if(!isKlang && crane) h += '<div class="bonus-row"><span>🏗 โบนัสเครน</span><span>+฿10/คน</span></div>';
+  if(!isKlang && labor) h += '<div class="bonus-row"><span>💪 โบนัสแรงงาน</span><span>+฿5/คน</span></div>';
   h += '<hr style="border:none;border-top:0.5px solid #fac775;margin:6px 0">';
   h += '<div class="bonus-row"><span>🚗 '+drv+' (คนขับ)</span><span>฿'+drvTotal.toFixed(0)+'</span></div>';
   hlpArr.forEach(n=>{ h += '<div class="bonus-row"><span>👤 '+n+' (ผู้ช่วย)</span><span>฿'+hlpTotal.toFixed(0)+'</span></div>'; });
@@ -2228,15 +2248,17 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   var hlpArr = [...helpers];
   var dest = document.getElementById('fDest').value.trim();
   var delivTypeVal = document.getElementById('fDeliveryType').value;
-  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive' || delivTypeVal === 'klang';
+  var isKlang = delivTypeVal === 'klang';
+  var isUPK = dest.toUpperCase().includes('UPK') || delivTypeVal === 'upk' || delivTypeVal === 'receive' || isKlang;
   var brickOn = document.getElementById('chipBrick').classList.contains('on');
   var brickQty = brickOn ? (parseInt(document.getElementById('fBrickQty').value)||0) : 0;
   var crane = document.getElementById('chipCrane').classList.contains('on');
   var labor = document.getElementById('chipLabor').classList.contains('on');
   var nAll = 1+hlpArr.length;
-  var brickTotal = brickQty*0.25;
-  var brickPP = nAll>0 ? brickTotal/nAll : 0;
-  var extraPP = (crane?10:0)+(labor?5:0);
+  // งานส่งคลัง = ฿0 ล้วน (ไม่คิดทั้งค่าเที่ยวพื้นฐานและโบนัส)
+  var brickTotal = isKlang ? 0 : brickQty*0.25;
+  var brickPP = (isKlang || nAll<=0) ? 0 : brickTotal/nAll;
+  var extraPP = isKlang ? 0 : (crane?10:0)+(labor?5:0);
   // UPK = ไม่คิดค่าเที่ยวพื้นฐาน
   var baseDrv = isUPK ? 0 : 40;
   var baseHlp = isUPK ? 0 : 20;
@@ -2852,7 +2874,7 @@ function renderAdmin(){ try{ loadQbConfig(); }catch(e){}
       var carShort=r.car.includes('ผจ-9245')?'ผจ-9245':(r.car.includes('ผม-9721')?'ผม-9721':'84-5763');
       var team=(r.helpers||[]).length?r.driver+', '+r.helpers.join(', '):r.driver;
       var pc=(r.photosBefore?r.photosBefore.length:0)+(r.photosAfter?r.photosAfter.length:0);
-      var typeLabel=r.deliveryType==='receive'?'📦 รับสินค้า':(r.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า');
+      var typeLabel=typeLabelOf(r);
       return '<div style="background:var(--card);border:0.5px solid var(--border);border-left:4px solid var(--amber);border-radius:var(--r);padding:14px;margin-bottom:10px;box-shadow:var(--shadow)">'
         +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">'
         +'<div style="font-size:14px;font-weight:700;font-family:monospace">'+r.bill+'</div>'
@@ -3106,12 +3128,12 @@ function renderHistory(){
   shown.forEach(function(r){
     var carBadge=r.car.includes('6 ล้อ')?'b-green':'b-blue';
     var carShort=r.car.includes('ผจ-9245')?'กระบะ ผจ-9245':(r.car.includes('ผม-9721')?'กระบะ ผม-9721':(r.car.includes('6 ล้อ')?'6 ล้อ 84-5763':'รถ'));
-    var typeLabel=r.deliveryType==='receive'?'📦 รับสินค้า':(r.deliveryType==='upk'?'🏢 UPK':'🚚 ส่งลูกค้า');
-    var typeBadge=r.deliveryType==='receive'?'b-purple':(r.deliveryType==='upk'?'b-blue':'b-orange');
+    var typeLabel=typeLabelOf(r);
+    var typeBadge=typeBadgeOf(r);
     var team=(r.helpers||[]).length?r.driver+', '+r.helpers.join(', '):r.driver;
     var pc=(r.photosBefore?r.photosBefore.length:0)+(r.photosAfter?r.photosAfter.length:0);
     var done=r.step2Done;
-    html+='<div class="hist-item '+(r.brickOn||r.crane||r.labor?'special':'')+'" onclick="showDetail('+r.id+')">'
+    html+='<div class="hist-item '+((delivTypeOf(r)!=='klang'&&(r.brickOn||r.crane||r.labor))?'special':'')+'" onclick="showDetail('+r.id+')">'
       +'<div class="hi-top"><div style="display:flex;align-items:center;gap:6px"><div class="hi-bill">'+r.bill+'</div>'+(r.status==='pending'?'<span style="font-size:11px;font-weight:700;color:var(--red);background:var(--red-bg);padding:2px 7px;border-radius:10px">รออนุมัติ</span>':'')
       +(r.lastEditedAt?'<span style="font-size:11px;font-weight:600;color:var(--amber);background:var(--amber-bg);padding:2px 7px;border-radius:10px;margin-left:2px">✏️ แก้ไขแล้ว</span>':'')+'</div><div class="hi-date">'+r.date+'</div></div>'
       +'<div class="hi-mid">👤 '+team+(r.dest?' · 📍 '+r.dest:'')+'</div>'
@@ -3121,7 +3143,7 @@ function renderHistory(){
       +(done?'<span class="badge b-green">✓ ส่งครบ</span>':'<span class="badge b-red">📷 รอส่งรูป</span>')
       +(r.incomplete?('<span class="badge b-red">🚧 หัก 50% · '+penaltyLabel(r)+'</span>'):'')
       +(r.overpayNote?('<span class="badge b-amber">💸 จ่ายเกิน · หักคืน</span>'):'')
-      +(r.brickOn||r.crane||r.labor?'<span class="badge b-amber">⭐พิเศษ</span>':'')
+      +((delivTypeOf(r)!=='klang'&&(r.brickOn||r.crane||r.labor))?'<span class="badge b-amber">⭐พิเศษ</span>':'')
       +(pc?'<span class="badge b-gray">📷'+pc+'</span>':'')
       +(r.incomplete
         ? '<span class="hi-amount" style="color:var(--red)"><s style="opacity:.6;font-weight:600;margin-right:5px">฿'+Math.round((r.tripTotal||0)*2).toLocaleString()+'</s>฿'+Math.round(r.tripTotal||0).toLocaleString()+'</span>'
