@@ -742,7 +742,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.11</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.12</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -893,6 +893,14 @@ async function tgNewBill(rec){
   var doSend = (c === true);
   if(c === null){                                // เช็ก DB ไม่ได้ -> fallback localStorage
     if(!_sentBillIds.has(rec.bill)){ _sentBillIds.add(rec.bill); localStorage.setItem('_sentBillIds', JSON.stringify([..._sentBillIds])); doSend=true; }
+  }
+  // 🔗 ลิงก์เช็คสถานะสำหรับส่งต่อให้ลูกค้า — เฉพาะงานส่งลูกค้าเท่านั้น
+  // (ส่งคลัง/รับสินค้า/UPK ปลายทางไม่ใช่ลูกค้า ห้ามมีลิงก์)
+  if(doSend && delivTypeOf(rec)==='deliver' && rec.bill){
+    try{
+      var tUrl = await buildTrackUrl(rec.bill);
+      if(tUrl) msg += NL+'🔗 <a href="'+tUrl+'">ลิงก์เช็คสถานะ (กดค้าง = คัดลอกส่งลูกค้า)</a>';
+    }catch(e){ console.warn('trackUrl', e); }
   }
   if(doSend) sendTelegramDeliv(msg);
 }
