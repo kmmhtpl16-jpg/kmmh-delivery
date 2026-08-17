@@ -573,7 +573,18 @@ async function saveBooking(){
   else { _st='booked'; }
   if(bill){
     if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
-    if(db){ try{ var _ck=await db.from('bookings').select('data'); if(_ck&&_ck.data){ var _dup=_ck.data.map(function(x){return x.data;}).filter(Boolean).some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';}); if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; } } }catch(e){} }
+    // 📉 17ส.ค.69: เดิม select('data') = ดาวน์โหลดบิลทั้ง 237 ใบพร้อมรูปแนบ ~23MB
+    // ทุกครั้งที่กดบันทึก แค่เพื่อเช็กเลขบิลซ้ำ (วันละ ~4 ครั้ง = 92MB/วัน = 2.8GB/เดือน)
+    // ใหม่: ดึงแค่ (เลขบิล, สถานะ) ~10KB — ตรรกะเทียบเหมือนเดิมเป๊ะ
+    if(db){ try{
+      var _rows=null;
+      var _ck=await db.from('bookings').select('status,bill:data->>bill').neq('status','cancel');
+      if(!_ck.error && _ck.data){ _rows=_ck.data; }
+      else { var _f=await db.from('bookings').select('data,status');   // สำรอง
+             _rows=(_f.data||[]).map(function(x){ return {status:x.status, bill:(x.data&&x.data.bill)||null}; }); }
+      var _dup=_rows.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';});
+      if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; }
+    }catch(e){} }
   } else {
     bill=autoRef(type);
   }

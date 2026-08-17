@@ -953,16 +953,29 @@ async function tgPenaltyAlert(rec, retro){
   }
   if(doSend) sendTelegramDeliv(msg);
 }
+// ดึงสารบัญบิล (id, เลขบิล, สถานะ) โดยไม่ลากรูปแนบ base64 มาด้วย — ~10KB แทน ~23MB
+// ถ้า PostgREST ไม่รับ json-path จะถอยไปใช้วิธีเดิมอัตโนมัติ (ช้าแต่ผลลัพธ์เท่ากัน)
+async function _bookingBillIndex(){
+  try{
+    var r=await db.from('bookings').select('id,status,bill:data->>bill');
+    if(!r.error && r.data) return r.data;
+  }catch(e){ console.warn('billIndex narrow failed, fallback', e); }
+  var f=await db.from('bookings').select('id,data,status');
+  return (f.data||[]).map(function(x){ return {id:x.id, status:x.status, bill:(x.data&&x.data.bill)||null}; });
+}
 // อัปเดตสถานะคิวจอง (bookings) เป็น done เมื่อส่งสำเร็จ — ทั้ง cloud + local
 async function markBookingDone(bill){
   var k=(bill||'').trim().toUpperCase(); if(!k) return;
   try{
     if(typeof db!=='undefined' && db){
-      var r=await db.from('bookings').select('id,data,status');
-      if(r&&r.data){
-        var row=r.data.filter(function(x){ return (((x.data&&x.data.bill)||'').trim().toUpperCase()===k) && x.status!=='cancel'; })[0];
-        if(row){ var d=row.data||{}; d.status='done'; d.deliveredAt=Date.now();
-          await db.from('bookings').update({status:'done', data:d}).eq('id',row.id); }
+      // 📉 17ส.ค.69: เดิม select('id,data,status') = ลากบิลทั้ง 237 ใบพร้อมรูปแนบ base64 ~23MB
+      // มาหาบิลใบเดียว → เปลี่ยนเป็นดึงแค่เลขบิลมาไล่หา แล้วค่อยดึง data เต็มของแถวที่เจอ 1 แถว
+      var idx=await _bookingBillIndex();
+      var row=idx.filter(function(x){ return ((x.bill||'').trim().toUpperCase()===k) && x.status!=='cancel'; })[0];
+      if(row){
+        var one=await db.from('bookings').select('data').eq('id',row.id).maybeSingle();
+        var d=(one&&one.data&&one.data.data)||{}; d.status='done'; d.deliveredAt=Date.now();
+        await db.from('bookings').update({status:'done', data:d}).eq('id',row.id);
       }
     }
   }catch(e){ console.warn('markBookingDone cloud',e); }
@@ -1032,8 +1045,14 @@ async function sendQueueBacklog(){
   var booked=[];
   try{
     if(typeof db!=='undefined' && db){
-      var r=await db.from('bookings').select('data,status');
-      if(r&&r.data){ booked=r.data.filter(function(x){ return x.status==='booked'; }).map(function(x){return x.data||{};}); }
+      // 📉 17ส.ค.69: เดิม select('data,status') ลากทั้งตาราง ~23MB มาใช้แค่ 3 ฟิลด์
+      var r=await db.from('bookings').select('status,type:data->>type,bill:data->>bill,customer:data->>customer').eq('status','booked');
+      if(r.error){ // สำรอง: PostgREST ไม่รับ json-path
+        var f=await db.from('bookings').select('data,status');
+        booked=(f.data||[]).filter(function(x){ return x.status==='booked'; }).map(function(x){return x.data||{};});
+      } else {
+        booked=(r.data||[]).map(function(x){ return {type:x.type, bill:x.bill, customer:x.customer}; });
+      }
     } else {
       var raw=localStorage.getItem('qb_v1'); if(raw){ var st=JSON.parse(raw); if(st&&st.bookings){ booked=st.bookings.filter(function(b){return b.status==='booked';}); } }
     }
@@ -1965,22 +1984,35 @@ function confirmBlurryPhoto(dataUrl, cb){
   ov.querySelector('#__blurRetake').onclick=function(){ done(false); };
   ov.querySelector('#__blurKeep').onclick=function(){ done(true); };
 }
+// ==================== ⚙️ ตั้งค่าบีบอัดรูป (17 ส.ค.69) ====================
+// เดิม 1600px + q0.8 + ลดคุณภาพเฉพาะเมื่อ base64 > 700,000 ตัวอักษร (~525KB) → ด่านนั้นแทบไม่เคย
+// ทำงาน รูปจริงเลยหนักเฉลี่ย 326KB (พ.ค. เคยอยู่ 47KB) → storage โตวันละ ~9MB จะเต็ม 1GB ก.ย.69
+// ใหม่: ตั้ง "เป้าหมายขนาด" แล้วไล่ลดคุณภาพจนถึงเป้า — ความละเอียดยังพออ่านเลขบิล
+var PHOTO_MAX_PX  = 1400;    // กว้าง/สูงสูงสุด (เดิม 1600)
+var PHOTO_Q_START = 0.72;    // คุณภาพเริ่มต้น (เดิม 0.8)
+var PHOTO_Q_MIN   = 0.42;    // ห้ามต่ำกว่านี้ กันรูปแตกจนอ่านไม่ออก
+var PHOTO_TARGET  = 150000;  // เป้า base64 ~150,000 ตัวอักษร ≈ 112 KB/รูป
+// 🔎 อ่านเลขบิลไม่ออก? เพิ่ม PHOTO_MAX_PX=1600 และ PHOTO_TARGET=220000
+function _squeezePhoto(img){
+  var MAX = PHOTO_MAX_PX, w = img.width, h = img.height;
+  if(w>MAX){ h=Math.round(h*MAX/w); w=MAX; }
+  else if(h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
+  var c = document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  var q = PHOTO_Q_START, out = c.toDataURL('image/jpeg', q);
+  while(out.length > PHOTO_TARGET && q > PHOTO_Q_MIN){
+    q = Math.round((q-0.06)*100)/100;
+    out = c.toDataURL('image/jpeg', q);
+  }
+  return out;
+}
+
 function compressImage(file, callback){
   var reader = new FileReader();
   reader.onload = function(e){
     var img = new Image();
     img.onload = function(){
-      var MAX = 1600;
-      var w = img.width, h = img.height;
-      if(w>MAX){ h=Math.round(h*MAX/w); w=MAX; }
-      else if(h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
-      var canvas = document.createElement('canvas');
-      canvas.width=w; canvas.height=h;
-      canvas.getContext('2d').drawImage(img,0,0,w,h);
-      var __out = canvas.toDataURL('image/jpeg',0.8);
-      // 📉 ถ้าไฟล์ใหญ่เกิน (เน็ตช้าอัปไม่ขึ้น) ลดคุณภาพลงทีละขั้น โดยคงความละเอียดไว้ให้อ่านบิลได้
-      var __q=0.8;
-      while(__out.length>700000 && __q>0.5){ __q-=0.12; __out=canvas.toDataURL('image/jpeg',__q); }
+      var __out = _squeezePhoto(img);
       var __sharp = computeSharpness(img);
       if(__sharp < 80){ confirmBlurryPhoto(__out, function(ok){ if(ok) callback(__out); }); }
       else { callback(__out); }
@@ -2010,7 +2042,10 @@ async function uploadPhotoToStorage(base64, filename){
   // 🔁 ลองอัปซ้ำสูงสุด 3 ครั้ง (กันเน็ตหลุดชั่วคราว) — ใช้ path เดิม + x-upsert กันไฟล์ซ้ำ
   for(var attempt=1; attempt<=5; attempt++){
     try{
-      var up2 = await db.storage.from('delivery-photos').upload(path, blob, {upsert:true, contentType:'image/jpeg'});
+      // 🚀 cacheControl 1 ปี: ชื่อไฟล์ไม่ซ้ำกันอยู่แล้ว (มี timestamp) รูปจึงไม่มีวันเปลี่ยน
+      // → ให้ CDN แคชไว้ยาว ๆ การเปิดดูซ้ำจะไปนับเป็น "Cached Egress" (โควตาแยก 5GB ใช้ไปแค่ 0.19GB)
+      // แทนที่จะกิน Egress ปกติ (ตอนนี้ 7.2/5GB เกินแล้ว) — เดิมไม่ได้ตั้ง = ค่าเริ่มต้นแคชแค่ 1 ชม.
+      var up2 = await db.storage.from('delivery-photos').upload(path, blob, {upsert:true, contentType:'image/jpeg', cacheControl:'31536000'});
       if(up2.error) throw new Error(up2.error.message||'upload2');
       return SUPABASE_URL+'/storage/v1/object/public/delivery-photos/'+path;
     }catch(e){
@@ -3180,13 +3215,7 @@ function setHF(m){ histFilter=m; histShown=HIST_PAGE; renderHistory(); }
 function _compressForUpload(file, cb){
   var reader=new FileReader();
   reader.onload=function(e){ var img=new Image(); img.onload=function(){
-    var MAX=1600,w=img.width,h=img.height;
-    if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} else if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
-    var c=document.createElement('canvas'); c.width=w;c.height=h;
-    c.getContext('2d').drawImage(img,0,0,w,h);
-    var out=c.toDataURL('image/jpeg',0.8),q=0.8;
-    while(out.length>700000&&q>0.5){q-=0.12;out=c.toDataURL('image/jpeg',q);}
-    cb(out);
+    cb(_squeezePhoto(img));
   }; img.src=e.target.result; }; reader.readAsDataURL(file);
 }
 async function adminAddPhotos(id, kind){
