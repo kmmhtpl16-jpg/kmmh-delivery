@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.6 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.7 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -213,6 +213,17 @@ var _showAllCancel=false;  // กลุ่มยกเลิก: โชว์ 6 
    ถ้าดึงทั้ง 192 บิลจะได้ก้อน ~20MB โหลด ~5 วิ; ตอนนี้ดึงงานที่ยังเดินอยู่ทั้งหมด + บิลปิดล่าสุด 12 ใบ
    ส่วนยอดรวมใช้ count() ที่ฝั่งเซิร์ฟเวอร์ (ไม่ต้องโหลดข้อมูลมานับเอง) */
 var _doneTotal=null, _cancelTotal=null, _allCancelLoaded=false;  // ยังไม่ได้ดึงของสดจากคลาวด์ → อย่าเพิ่งโชว์ของเก่าในเครื่อง (กันภาพกระพริบ/บิลที่ปิดไปแล้วโผล่)
+/* 📉 18ส.ค.69: บิลปิดแล้ว (ส่งสำเร็จ/ยกเลิก) ดึงจาก view 'bookings_lite' = ข้อมูลเหมือนเดิมทุกฟิลด์
+   แต่ตัด key 'attach' (base64 รูป/PDF) ออก → 24 ใบ จาก 1.73MB เหลือ 10.7KB (เล็กลง 161 เท่า)
+   ไฟล์แนบโหลดทีหลังเฉพาะใบที่กดดู (hydrateAttach)
+   ⚠️ บิลที่ยังไม่ hydrate = ข้อมูลไม่ครบ → ห้าม upsert กลับเด็ดขาด ไม่งั้นไฟล์แนบหาย
+      กันไว้ 2 ชั้น: (1) save() ข้ามบิลที่อยู่ใน _liteIds  (2) restoreBooking() hydrate ก่อนแก้เสมอ
+   เก็บธงไว้ "นอก" ตัวบิล (side map) ไม่ยัดคีย์แปลกปลอมลง object → JSON เทียบกับ _cloudSnap ได้สะอาด
+   และไม่มีทางหลุดไปเขียนลง data ในฐานข้อมูล */
+var _liteIds={};      // id -> true  = บิลที่โหลดมาแบบไม่มีไฟล์แนบ
+var _attachMeta={};   // id -> {type,name} = รู้ว่ามีไฟล์แนบ แต่ยังไม่ได้โหลดตัวไฟล์
+var _hydrating={};    // id -> true  = กำลังโหลดไฟล์แนบอยู่ (กันกดซ้ำ)
+var _hydrateTried={}; // id -> true  = เคยลองโหลดอัตโนมัติแล้ว (กันวนซ้ำไม่รู้จบตอนเน็ตล่ม)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
 function def(){ return {bookings:[], store:null, threshold:2, favorites:[]}; }
 function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
@@ -251,6 +262,11 @@ function save(){
     // อัปเฉพาะบิลที่ต่างจากที่โหลดมาจาก cloud (บิลที่เครื่องนี้แก้จริง) — ไม่ยกทั้งชุดไปทับของสดคนอื่น
     var rows=[], js=[];
     state.bookings.forEach(function(b){
+      // 🛡️ บิลที่ยังไม่ได้โหลดไฟล์แนบ ห้ามเขียนกลับ — data ในมือไม่ครบ เขียนไปคือลบไฟล์แนบทิ้ง
+      if(_liteIds[b.id]){
+        if(_cloudSnap[b.id]!==JSON.stringify(b)) console.warn('save: ข้ามบิล '+b.bill+' (ยังไม่ได้โหลดไฟล์แนบ) — ต้อง hydrateAttach ก่อนแก้');
+        return;
+      }
       var j=JSON.stringify(b);
       if(_cloudSnap[b.id]!==j){ rows.push({id:b.id, status:b.status, created_at:b.createdAt, data:b}); js.push(j); }
     });
@@ -311,20 +327,79 @@ async function qShareTrackLink(bill){
   else prompt('คัดลอกข้อความนี้ส่งให้ลูกค้า', text);
 }
 async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; _qbCfg=c; state.favorites=Array.isArray(c.favorites)?c.favorites:(state.favorites||[]); renderFavBar(); if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
+/* ดึงบิลที่ปิดแล้ว — src='bookings_lite' คือแบบไม่มีไฟล์แนบ (เบากว่า 161 เท่า) */
+function closedQuery(src,st,lim){
+  var cols=(src==='bookings_lite')?'data,attach_type,attach_name':'data';
+  return db.from(src).select(cols).eq('status',st).order('created_at',{ascending:false}).limit(lim);
+}
+/* โหลดไฟล์แนบของบิลใบเดียว (เรียกตอนผู้ใช้กดดูจริงเท่านั้น) */
+async function hydrateAttach(id){
+  var b=find(id);
+  if(!b || !_liteIds[id] || _hydrating[id]) return b;
+  _hydrating[id]=true; _hydrateTried[id]=true;
+  try{
+    var r=await db.from('bookings').select('data').eq('id',id).maybeSingle();
+    if(r && !r.error && r.data && r.data.data){
+      var full=r.data.data;
+      if(full.attach) b.attach=full.attach;
+      delete _liteIds[id];
+      delete _attachMeta[id];
+      _cloudSnap[b.id]=JSON.stringify(b);   // อัปสแนปช็อตด้วย ไม่งั้น save() จะนึกว่าบิลนี้ถูกแก้
+    } else {
+      console.warn('โหลดไฟล์แนบไม่สำเร็จ', r && r.error);
+    }
+  }catch(e){ console.warn('hydrateAttach',e); }
+  _hydrating[id]=false;
+  return b;
+}
+/* ชื่อไฟล์ยาว ๆ (เช่น 1784943815327259572552231606874.jpg) ทำการ์ดเบี้ยว → ตัดให้สั้น */
+function shortName(n){
+  if(!n) return '';
+  n=String(n);
+  if(n.length<=18) return ' · '+n;
+  var dot=n.lastIndexOf('.'), ext=(dot>0&&n.length-dot<=6)?n.slice(dot):'';
+  return ' · '+n.slice(0,10)+'…'+ext;
+}
+/* ปุ่ม "ดูไฟล์แนบ" บนการ์ด/หน้ารายละเอียด */
+async function loadAttach(id,ev){
+  if(ev&&ev.stopPropagation) ev.stopPropagation();
+  var btn=ev&&ev.target; if(btn){ btn.disabled=true; btn.textContent='⏳ กำลังโหลด…'; }
+  await hydrateAttach(id);
+  renderQueue();
+  if(document.getElementById('detailModal').classList.contains('show')) showDetail(id);
+}
 async function loadCloud(){
   if(!db){ _cloudPending=false; renderQueue(); return; }
   try{
     var CLOSED_FETCH=12;   // บิลปิดแล้วที่ดึงมาเผื่อโชว์ 6 ใบล่าสุด
     var q=await Promise.all([
       db.from('bookings').select('data').in('status',['booked','delivering','postponed','onhold']),   // งานที่ยังเดินอยู่ = ต้องครบ
-      db.from('bookings').select('data').eq('status','done').order('created_at',{ascending:false}).limit(CLOSED_FETCH),
-      db.from('bookings').select('data').eq('status','cancel').order('created_at',{ascending:false}).limit(CLOSED_FETCH),
+      closedQuery('bookings_lite','done',CLOSED_FETCH),
+      closedQuery('bookings_lite','cancel',CLOSED_FETCH),
       db.from('bookings').select('id',{count:'exact',head:true}).eq('status','done'),
       db.from('bookings').select('id',{count:'exact',head:true}).eq('status','cancel')
     ]);
+    // สำรอง: ถ้า view ยังไม่ได้สร้าง/ถูกลบ → ถอยไปดึงแบบเดิม แย่สุดคือเท่าเดิม ไม่มีทางพัง
+    var _isLite=true;
+    if((q[1]&&q[1].error)||(q[2]&&q[2].error)){
+      console.warn('bookings_lite ใช้ไม่ได้ → ถอยไปดึงแบบเดิม', (q[1]&&q[1].error)||(q[2]&&q[2].error));
+      _isLite=false;
+      q[1]=await closedQuery('bookings','done',CLOSED_FETCH);
+      q[2]=await closedQuery('bookings','cancel',CLOSED_FETCH);
+    }
     var r={data:[]};
+    _liteIds={}; _attachMeta={}; _hydrateTried={};
     if(q[0]&&q[0].data){
       r.data=q[0].data.concat((q[1]&&q[1].data)||[]).concat((q[2]&&q[2].data)||[]);
+      if(_isLite){
+        [q[1],q[2]].forEach(function(res){
+          ((res&&res.data)||[]).forEach(function(x){
+            if(!x||!x.data||!x.data.id) return;
+            _liteIds[x.data.id]=true;
+            if(x.attach_type||x.attach_name) _attachMeta[x.data.id]={type:x.attach_type||'image', name:x.attach_name||''};
+          });
+        });
+      }
       _doneTotal=(q[3]&&q[3].count!=null)?q[3].count:null;
       _cancelTotal=(q[4]&&q[4].count!=null)?q[4].count:null;
       _allCancelLoaded=(_cancelTotal!=null&&_cancelTotal<=CLOSED_FETCH);
@@ -639,11 +714,22 @@ async function toggleAllCancel(){
   if(!_showAllCancel && !_allCancelLoaded && db){
     var btn=document.getElementById('btnAllCancel'); if(btn){ btn.disabled=true; btn.textContent='⏳ กำลังโหลด…'; }
     try{
-      var r=await db.from('bookings').select('data').eq('status','cancel');
+      /* 📉 18ส.ค.69: เดิมดึง data เต็มของบิลยกเลิกทุกใบ (~1.1MB) แค่มาโชว์การ์ด
+         ใหม่: ดึงจาก view ที่ไม่มีไฟล์แนบ แล้วจดไว้ใน _liteIds
+         ⚠️ ของเดิมเคยอันตรายตรงที่ save() จะ upsert กลับแล้วไฟล์แนบหาย —
+            ตอนนี้ save() ข้ามทุกบิลที่อยู่ใน _liteIds และ restoreBooking() hydrate ก่อนแก้เสมอ */
+      var _lite=true;
+      var r=await db.from('bookings_lite').select('data,attach_type,attach_name').eq('status','cancel');
+      if(r&&r.error){ console.warn('bookings_lite ใช้ไม่ได้ → ถอยไปดึงแบบเดิม',r.error); _lite=false; r=await db.from('bookings').select('data').eq('status','cancel'); }
       if(r&&r.data){
         var have={}; state.bookings.forEach(function(b){ have[b.id]=1; });
-        r.data.map(function(x){return x.data;}).filter(Boolean).forEach(function(b){
-          if(!have[b.id]){ state.bookings.push(b); _cloudSnap[b.id]=JSON.stringify(b); }
+        r.data.forEach(function(x){
+          var b=x&&x.data; if(!b||!b.id||have[b.id]) return;
+          state.bookings.push(b); _cloudSnap[b.id]=JSON.stringify(b);
+          if(_lite){
+            _liteIds[b.id]=true;
+            if(x.attach_type||x.attach_name) _attachMeta[b.id]={type:x.attach_type||'image', name:x.attach_name||''};
+          }
         });
         _allCancelLoaded=true;
       }
@@ -685,7 +771,16 @@ function applyCancel(kind){
   var _ic,_tt; if(kind==='postpone'){_ic='📅';_tt='เลื่อนวันส่ง';} else if(kind==='onhold'){_ic='⏸️';_tt='พักไว้ก่อน · ยังไม่มีกำหนดส่ง';} else {_ic='❌';_tt='ยกเลิกการจอง';} var m=_ic+' <b>'+_tt+'</b>\n\uD83E\uDDFE \u0e1a\u0e34\u0e25: '+b.bill; if(b.customer) m+='\n\uD83D\uDC64 '+b.customer; m+='\n\uD83D\uDCCC '+b.cancelReason; sendTelegram(m,QUEUE_CHAT);
   save(); closeCancel(); renderQueue();
 }
-function restoreBooking(id){ var b=find(id); if(b){ b.status='booked'; b.cancelReason=null; b.newDate=null; save(); renderQueue(); } }
+async function restoreBooking(id){
+  var b=find(id); if(!b) return;
+  // บิลยกเลิกโหลดมาแบบไม่มีไฟล์แนบ → ต้องดึงของครบก่อนแก้ ไม่งั้นเขียนกลับแล้วไฟล์แนบหาย
+  if(_liteIds[id]){
+    await hydrateAttach(id);
+    if(_liteIds[id]){ alert('⚠️ โหลดข้อมูลบิลไม่ครบ (เน็ตมีปัญหา?) ยังไม่เปลี่ยนสถานะ — ลองใหม่อีกครั้งครับ'); return; }
+    b=find(id); if(!b) return;
+  }
+  b.status='booked'; b.cancelReason=null; b.newDate=null; save(); renderQueue();
+}
 function find(id){ return state.bookings.filter(function(b){return b.id===id;})[0]; }
 function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 function _dueNotified(k){ try{ var o=JSON.parse(localStorage.getItem('qb_due_notified')||'{}'); return !!o[k]; }catch(e){ return false; } }
@@ -814,6 +909,8 @@ function card(b,showChk,together){
   h+='</div><div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">'+tags+'</div></div>';
   if(b.cancelReason) h+='<div class="meta" style="color:var(--orange)">📌 '+b.cancelReason+'</div>';
   if(b.attach){ if(b.attach.type==='pdf') h+='<div class="filechip">📄 <a href="'+b.attach.data+'" target="_blank" style="color:#991b1b">'+(b.attach.name||'ไฟล์ PDF')+'</a></div>'; else h+='<img class="photo" src="'+b.attach.data+'">'; }
+  else if(_attachMeta[b.id]){ /* บิลปิดแล้ว: ยังไม่โหลดไฟล์แนบ (ประหยัดเน็ต) กดแล้วค่อยโหลด */
+    h+='<div class="filechip">'+(_attachMeta[b.id].type==='pdf'?'📄':'🖼️')+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="event.stopPropagation();loadAttach(\''+b.id+'\',event)">แตะดูไฟล์แนบ'+shortName(_attachMeta[b.id].name)+'</button></div>'; }
   if(b.status==='done' && b.gap!=null){
     var th=state.threshold||2;
     if(b.gap<=th) h+='<div class="gap-ok">✓ ส่งตรงจุด — ห่างจากที่จอง '+fmtkm(b.gap)+'</div>';
@@ -833,6 +930,10 @@ function card(b,showChk,together){
 var _dmap=null;
 function showDetail(id){
   var b=find(id); if(!b) return;
+  // กดเปิดดูใบไหน ค่อยโหลดไฟล์แนบของใบนั้นใบเดียว (ครั้งเดียว ถ้าพลาดไม่วนซ้ำ)
+  if(_liteIds[id] && _attachMeta[id] && !_hydrateTried[id]){
+    hydrateAttach(id).then(function(){ showDetail(id); renderQueue(); });
+  }
   document.getElementById('detailModal').classList.add('show');
   function gmap(la,ln){ return 'https://www.google.com/maps?q='+la+','+ln; }
   var html='';
@@ -848,6 +949,7 @@ function showDetail(id){
     html+=(b.gap<=th?'<div class="gap-ok">&#10003; ส่งตรงจุด ':'<div class="gap-warn">&#9888;&#65039; ส่งห่างจากที่จอง ')+fmtkm(b.gap)+'</div>';
   }
   if(b.attach){ if(b.attach.type==='pdf') html+='<div class="filechip">&#128196; <a href="'+b.attach.data+'" target="_blank" style="color:#991b1b">'+(b.attach.name||'PDF')+'</a></div>'; else html+='<img src="'+b.attach.data+'" style="width:100%;max-width:260px;border-radius:8px;margin-top:8px">'; }
+  else if(_attachMeta[b.id]){ html+='<div class="filechip">'+(_hydrating[b.id]?'&#9203; กำลังโหลดไฟล์แนบ…':('&#128206; <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="loadAttach(\''+b.id+'\',event)">แตะดูไฟล์แนบ</button>'))+'</div>'; }
   document.getElementById('detailInfo').innerHTML=html;
   setTimeout(function(){
     if(!_dmap){ _dmap=L.map('detailMap'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'(c) OpenStreetMap'}).addTo(_dmap); }
