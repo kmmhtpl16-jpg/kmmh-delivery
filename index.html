@@ -741,7 +741,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.13</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.14</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1415,18 +1415,38 @@ function showUpdating(on){
 }
 
 // Save single record to Supabase
-async function saveToCloud(rec){
-  if(!db) return;
+/* 🐛 แก้ 19ส.ค.69 — "⚠️ บันทึก Cloud ไม่สำเร็จ" เตือนหลอก
+   เดิม: ตอนกดบันทึกรถออก โค้ดยิง upsert_delivery ของบิลเดียวกัน 2 ครั้งพร้อมกัน
+         (tgNewBill() ที่ไม่ await ข้างในมี await saveToCloud + บรรทัดถัดมาเรียก saveToCloud อีกที)
+         ห่างกันแค่ 3-11 ms -> Postgres ชนกันเอง ตัวหนึ่งได้ unique violation (409)
+         -> เด้งเตือนแดงใส่คนขับทั้งที่ข้อมูลเข้าครบ (อีก request สำเร็จ)
+   ใหม่ 2 ชั้น: (1) ต่อคิวตาม id - บิลเดียวกันบันทึกทีละครั้ง ไม่ชนกันอีก
+                (2) ถ้ายังเจอ 23505/409 (เครื่องอื่นเขียนพร้อมกัน) ลองใหม่เงียบๆ 1 ครั้งก่อนค่อยเตือน
+   ⚠️ ห้ามตัด await saveToCloud ใน tgNewBill/tgDone ทิ้ง - มีไว้ให้แถวมีใน DB ก่อน claimNotify */
+var _saveChain = {};   // id -> คิวบันทึกของบิลนั้น
+function _isConflictErr(err){
+  if(!err) return false;
+  return err.code==='23505' || err.code==='409' || /duplicate key|conflict/i.test(err.message||'');
+}
+async function _saveToCloudOnce(rec){
+  var row = recToDb(rec);
+  var safeRow = Object.assign({}, row);
+  if(safeRow.photos_before && Array.isArray(safeRow.photos_before)){
+    safeRow.photos_before = safeRow.photos_before.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
+  }
+  if(safeRow.photos_after && Array.isArray(safeRow.photos_after)){
+    safeRow.photos_after = safeRow.photos_after.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
+  }
+  return db.rpc('upsert_delivery', {rec: safeRow});
+}
+async function _saveToCloudRun(rec){
   try{
-    var row = recToDb(rec);
-    var safeRow = Object.assign({}, row);
-    if(safeRow.photos_before && Array.isArray(safeRow.photos_before)){
-      safeRow.photos_before = safeRow.photos_before.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
+    var res = await _saveToCloudOnce(rec);
+    if(res && _isConflictErr(res.error)){
+      console.warn('upsert ชนกัน (409) -> ลองใหม่อีกครั้ง', rec && rec.bill);
+      await new Promise(function(r){ setTimeout(r, 300); });
+      res = await _saveToCloudOnce(rec);
     }
-    if(safeRow.photos_after && Array.isArray(safeRow.photos_after)){
-      safeRow.photos_after = safeRow.photos_after.map(function(p){ return (p&&p.startsWith('http'))?p:'[photo]'; });
-    }
-    var res = await db.rpc('upsert_delivery', {rec: safeRow});
     if(res.error && !res.error.message.includes('DataClone')) throw res.error;
   }catch(e){
     if(!e.message||!e.message.includes('DataClone')){
@@ -1434,6 +1454,17 @@ async function saveToCloud(rec){
       toast('err','⚠️ บันทึก Cloud ไม่สำเร็จ ข้อมูลอยู่ในเครื่อง');
     }
   }
+}
+async function saveToCloud(rec){
+  if(!db) return;
+  var id = rec && rec.id;
+  if(id==null) return _saveToCloudRun(rec);
+  var prev = _saveChain[id] || Promise.resolve();
+  // _saveToCloudRun จับ error ในตัวเองอยู่แล้ว คิวจึงไม่มีทางค้างเพราะตัวก่อนหน้าพัง
+  var mine = prev.then(function(){ return _saveToCloudRun(rec); });
+  _saveChain[id] = mine;
+  mine.then(function(){ if(_saveChain[id]===mine) delete _saveChain[id]; });  // คิวว่างแล้วเก็บกวาด
+  return mine;
 }
 
 // Delete from Supabase
