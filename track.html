@@ -158,6 +158,7 @@ var SHOP_TELS=['094-3574321','092-6656358'];
 var db=null;
 var TH_MON=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 var _cur={bill:'',key:'',token:''};
+var _pollTimer=null;   /* v1.1 20ส.ค.69: ตัวจับเวลารีเฟรช 60 วิ — เก็บไว้เพื่อ "หยุด" ได้เมื่องานจบ */
 
 function $(id){ return document.getElementById(id); }
 function show(id,on){ $(id).classList[on?'remove':'add']('hide'); }
@@ -209,6 +210,11 @@ function render(d){
            cancelled:['b-cancel','🔴 ยกเลิกรายการ']};
   var m=map[st]||map.booked;
   badge.className='badge '+m[0]; badge.textContent=m[1];
+
+  /* 🛑 งานจบแล้ว (ส่งสำเร็จ/ยกเลิก) = หยุดรีเฟรชอัตโนมัติ — เพิ่ม 20ส.ค.69
+     เดิมยิง track_delivery ทุก 60 วิไม่มีวันหยุด แท็บที่ลูกค้าเปิดค้างไว้ = 1,440 ครั้ง/วัน/แท็บ
+     ทั้งที่สถานะไม่มีทางเปลี่ยนอีกแล้ว (ไปกินเวลา DB จนหน้าลูกค้าคนอื่น timeout) */
+  if(st==='done' || st==='cancelled') stopPoll();
 
   /* ภาพสถานะ (พิกเซลอาร์ต) — ตั้ง src เฉพาะตอนเปลี่ยนสถานะ กันภาพเริ่มเล่นใหม่ตอน auto-refresh */
   var heroSrc={booked:'status-wait.gif',out:'status-out.gif',done:'status-done.gif'}[st];
@@ -332,12 +338,20 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Enter' && !$('formCard').classList.contains('hide')) submitForm();
 });
 
-/* รีเฟรชสถานะอัตโนมัติทุก 60 วิ ระหว่างที่ยังส่งไม่เสร็จ */
-setInterval(function(){
+/* รีเฟรชสถานะอัตโนมัติทุก 60 วิ "เฉพาะตอนที่ยังส่งไม่เสร็จ + แท็บเปิดอยู่จริง" */
+function stopPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
+_pollTimer=setInterval(function(){
   if(!_cur.bill) return;
   if($('result').classList.contains('hide')) return;
+  if(document.hidden) return;   /* แท็บถูกซ่อน/พับไว้ = ไม่ต้องยิง ค่อยยิงตอนกลับมาดู */
   lookup(_cur.bill,_cur.key,_cur.token).then(function(d){ if(d&&d.ok) render(d); });
 },60000);
+/* กลับมาเปิดแท็บอีกครั้ง = ดึงสถานะล่าสุดทันที ไม่ต้องรอครบ 60 วิ */
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden || !_pollTimer || !_cur.bill) return;
+  if($('result').classList.contains('hide')) return;
+  lookup(_cur.bill,_cur.key,_cur.token).then(function(d){ if(d&&d.ok) render(d); });
+});
 
 /* ปุ่ม/ปัดนิ้ว/คีย์บอร์ด ของกล่องดูรูป */
 (function(){

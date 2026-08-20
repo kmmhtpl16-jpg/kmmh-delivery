@@ -741,7 +741,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.16</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.17</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -953,6 +953,20 @@ async function tgPenaltyAlert(rec, retro){
   }
   if(doSend) sendTelegramDeliv(msg);
 }
+/* 🛡️ กันคำสั่งที่ล้มเงียบ (เพิ่ม 20ส.ค.69 v1.17)
+   supabase-js v2 "ไม่ throw" เวลาผิดพลาด — มันคืน {data, error} เฉยๆ
+   ของเดิมเลยครอบ try/catch ไว้ก็จริง แต่ catch ไม่มีวันทำงาน → แอปเด้ง "✓ สำเร็จ" ทั้งที่ DB ไม่ขยับ
+   (เช่น session หมดอายุ แล้วกด "อนุมัติทั้งหมด" = บิลไม่เข้ายอด payroll โดยไม่มีใครรู้)
+   dbRun() = await ผลจริง แล้วถ้ามี res.error ให้โยนเป็น Error เพื่อให้ catch ข้างนอกจับได้ */
+async function dbRun(p, what){
+  var res = await p;
+  if(res && res.error){
+    var m = (res.error.message || res.error.details || res.error.hint || 'ไม่ทราบสาเหตุ');
+    throw new Error((what ? what+' — ' : '') + m);
+  }
+  return res;
+}
+
 // ดึงสารบัญบิล (id, เลขบิล, สถานะ) โดยไม่ลากรูปแนบ base64 มาด้วย — ~10KB แทน ~23MB
 // ถ้า PostgREST ไม่รับ json-path จะถอยไปใช้วิธีเดิมอัตโนมัติ (ช้าแต่ผลลัพธ์เท่ากัน)
 async function _bookingBillIndex(){
@@ -961,24 +975,35 @@ async function _bookingBillIndex(){
     if(!r.error && r.data) return r.data;
   }catch(e){ console.warn('billIndex narrow failed, fallback', e); }
   var f=await db.from('bookings').select('id,data,status');
+  if(f && f.error) throw new Error('อ่านคิวจอง — '+(f.error.message||'ไม่ทราบสาเหตุ')); // v1.17: เดิมคืน [] เงียบๆ = เหมือนไม่มีคิวจอง
   return (f.data||[]).map(function(x){ return {id:x.id, status:x.status, bill:(x.data&&x.data.bill)||null}; });
 }
 // อัปเดตสถานะคิวจอง (bookings) เป็น done เมื่อส่งสำเร็จ — ทั้ง cloud + local
 async function markBookingDone(bill){
   var k=(bill||'').trim().toUpperCase(); if(!k) return;
-  try{
-    if(typeof db!=='undefined' && db){
-      // 📉 17ส.ค.69: เดิม select('id,data,status') = ลากบิลทั้ง 237 ใบพร้อมรูปแนบ base64 ~23MB
-      // มาหาบิลใบเดียว → เปลี่ยนเป็นดึงแค่เลขบิลมาไล่หา แล้วค่อยดึง data เต็มของแถวที่เจอ 1 แถว
-      var idx=await _bookingBillIndex();
-      var row=idx.filter(function(x){ return ((x.bill||'').trim().toUpperCase()===k) && x.status!=='cancel'; })[0];
-      if(row){
-        var one=await db.from('bookings').select('data').eq('id',row.id).maybeSingle();
+  // v1.17: บล็อกไม่ได้ (บิลจัดส่งบันทึกไปแล้ว) → ลองใหม่ได้ถึง 3 รอบ ห่างรอบละ 2 วิ แล้วค่อยเตือน
+  if(typeof db!=='undefined' && db){
+    var lastErr=null;
+    for(var att=0; att<3; att++){
+      try{
+        // 📉 17ส.ค.69: เดิม select('id,data,status') = ลากบิลทั้ง 237 ใบพร้อมรูปแนบ base64 ~23MB
+        // มาหาบิลใบเดียว → เปลี่ยนเป็นดึงแค่เลขบิลมาไล่หา แล้วค่อยดึง data เต็มของแถวที่เจอ 1 แถว
+        var idx=await _bookingBillIndex();
+        var row=idx.filter(function(x){ return ((x.bill||'').trim().toUpperCase()===k) && x.status!=='cancel'; })[0];
+        if(!row){ lastErr=null; break; }   // ไม่มีคิวจองของบิลนี้ (กรอกเอง) = ไม่ใช่ความผิดพลาด
+        var one=await dbRun(db.from('bookings').select('data').eq('id',row.id).maybeSingle(),'อ่านคิวจอง');
         var d=(one&&one.data&&one.data.data)||{}; d.status='done'; d.deliveredAt=Date.now();
-        await db.from('bookings').update({status:'done', data:d}).eq('id',row.id);
+        await dbRun(db.from('bookings').update({status:'done', data:d}).eq('id',row.id),'ปิดคิวจอง');
+        lastErr=null; break;
+      }catch(e){
+        lastErr=e; console.warn('markBookingDone cloud (รอบ '+(att+1)+')',e);
+        if(att<2){ try{ await _sleep(2000); }catch(e2){} }
       }
     }
-  }catch(e){ console.warn('markBookingDone cloud',e); }
+    if(lastErr){
+      try{ toast('err','⚠️ บันทึกบิลแล้ว แต่ปิดคิวจอง '+k+' ในระบบไม่สำเร็จ — คิวจะยังค้าง "กำลังส่ง" กรุณาแจ้งแอดมิน'); }catch(e3){}
+    }
+  }
   try{ var raw=localStorage.getItem('qb_v1'); if(raw){ var st=JSON.parse(raw); if(st&&st.bookings){ var ch=false; st.bookings.forEach(function(b){ if(((b.bill||'').trim().toUpperCase()===k) && b.status!=='cancel' && b.status!=='done'){ b.status='done'; b.deliveredAt=Date.now(); ch=true; } }); if(ch) localStorage.setItem('qb_v1', JSON.stringify(st)); } } }catch(e){}
 }
 
@@ -1797,13 +1822,24 @@ async function commitQueueBooking(billNo){
     var map=window.__qmap||{}; var info=map[key];
     if(!info) return;
     if(typeof db!=='undefined' && db){
-      try{
-        var r=await db.from('bookings').select('data').eq('id',info.id).maybeSingle();
-        var d=(r&&r.data&&r.data.data)?r.data.data:null;
-        if(d){ d.status='delivering'; d.assignedAt=Date.now(); if(info.tripId) d.tripId=info.tripId;
-          await db.from('bookings').update({status:'delivering', data:d}).eq('id',info.id);
-        } else { await db.from('bookings').update({status:'delivering'}).eq('id',info.id); }
-      }catch(e){ console.warn('commitQ cloud',e); }
+      // v1.17: บล็อกไม่ได้ (บิลจัดส่งบันทึกไปแล้ว) → ลองใหม่ได้ถึง 3 รอบ ห่างรอบละ 2 วิ แล้วค่อยเตือน
+      var qErr=null;
+      for(var qa=0; qa<3; qa++){
+        try{
+          var r=await dbRun(db.from('bookings').select('data').eq('id',info.id).maybeSingle(),'อ่านคิวจอง');
+          var d=(r&&r.data&&r.data.data)?r.data.data:null;
+          if(d){ d.status='delivering'; d.assignedAt=Date.now(); if(info.tripId) d.tripId=info.tripId;
+            await dbRun(db.from('bookings').update({status:'delivering', data:d}).eq('id',info.id),'อัปเดตคิวจอง');
+          } else { await dbRun(db.from('bookings').update({status:'delivering'}).eq('id',info.id),'อัปเดตคิวจอง'); }
+          qErr=null; break;
+        }catch(e){
+          qErr=e; console.warn('commitQ cloud (รอบ '+(qa+1)+')',e);
+          if(qa<2){ try{ await _sleep(2000); }catch(e2){} }
+        }
+      }
+      if(qErr){
+        try{ toast('err','⚠️ บันทึกบิลแล้ว แต่อัปเดตคิวจอง '+key+' เป็น "กำลังส่ง" ไม่สำเร็จ — คิวจะยังขึ้นว่ารอส่ง กรุณาแจ้งแอดมิน'); }catch(e3){}
+      }
     }
     try{ var raw=localStorage.getItem('qb_v1'); if(raw){ var st=JSON.parse(raw); if(st&&st.bookings){ st.bookings.forEach(function(b){ if(b.id===info.id){ b.status='delivering'; b.assignedAt=Date.now(); if(info.tripId) b.tripId=info.tripId; } }); localStorage.setItem('qb_v1', JSON.stringify(st)); } } }catch(e){}
     delete map[key];
@@ -2922,15 +2958,23 @@ async function approveBill(id){
   }
   var idx = records.findIndex(function(r){return r.id===id;});
   if(idx<0) return;
-  records[idx].status = 'active';
-  records[idx].approvedBy = currentRole;
-  records[idx].approvedAt = new Date().toISOString();
-  save();
+  var approvedAt = new Date().toISOString();
+  /* v1.17: ส่งขึ้นระบบให้สำเร็จ "ก่อน" แล้วค่อยเปลี่ยนในเครื่อง
+     เดิมเปลี่ยนในเครื่องก่อนแล้วยิงคลาวด์แบบไม่เช็ค error → เน็ตหลุด/session หมด = จอเขียนว่าอนุมัติแล้ว
+     แต่ DB ยังเป็น pending → บิลไม่เข้ายอดค่าเที่ยว payroll */
   if(db){
     try{
-      await db.rpc('update_delivery',{rec_id:id,updates:{status:'active',approved_by:currentRole,approved_at:records[idx].approvedAt}});
-    }catch(e){ console.warn('Cloud approve failed:',e.message); }
+      await dbRun(db.rpc('update_delivery',{rec_id:id,updates:{status:'active',approved_by:currentRole,approved_at:approvedAt}}),'อนุมัติบิล');
+    }catch(e){
+      console.warn('Cloud approve failed:',e);
+      toast('err','❌ อนุมัติไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดใหม่');
+      return;
+    }
   }
+  records[idx].status = 'active';
+  records[idx].approvedBy = currentRole;
+  records[idx].approvedAt = approvedAt;
+  save();
   // Log it
   var logEntry = {
     bill: records[idx].bill,
@@ -2954,19 +2998,30 @@ async function approveAll(){
   var pending = records.filter(function(r){return r.status==='pending';});
   if(!pending.length){ toast('err','ไม่มีบิลรออนุมัติ'); return; }
   var now = new Date().toISOString();
+  /* v1.17: อนุมัติทีละใบแบบ "ขึ้นระบบสำเร็จก่อน ค่อยเปลี่ยนในเครื่อง"
+     ใบไหนไม่สำเร็จ = ไม่แตะในเครื่อง ยังค้างรออนุมัติให้กดซ้ำได้ (เดิมกลืน error เงียบทั้งชุด) */
+  var okN=0, failN=0, firstErr='';
   for(var i=0;i<pending.length;i++){
     var idx = records.findIndex(function(r){return r.id===pending[i].id;});
-    if(idx>=0){
-      records[idx].status='active';
-      records[idx].approvedBy=currentRole;
-      records[idx].approvedAt=now;
-      if(db){
-        try{ await db.rpc('update_delivery',{rec_id:records[idx].id,updates:{status:'active',approved_by:currentRole,approved_at:now}}); }catch(e){}
+    if(idx<0) continue;
+    if(db){
+      try{
+        await dbRun(db.rpc('update_delivery',{rec_id:records[idx].id,updates:{status:'active',approved_by:currentRole,approved_at:now}}),'อนุมัติบิล '+records[idx].bill);
+      }catch(e){
+        failN++; if(!firstErr) firstErr=(e&&e.message)||String(e);
+        console.warn('approveAll failed:',e);
+        continue;
       }
     }
+    records[idx].status='active';
+    records[idx].approvedBy=currentRole;
+    records[idx].approvedAt=now;
+    okN++;
   }
   save(); renderAdmin(); updatePendingBadge();
-  toast('ok','✓ อนุมัติ '+pending.length+' บิลแล้ว');
+  if(failN && !okN) toast('err','❌ อนุมัติไม่สำเร็จเลยสักบิล ('+firstErr+') — เช็คเน็ตแล้วกดใหม่');
+  else if(failN) toast('err','⚠️ อนุมัติขึ้นระบบแล้ว '+okN+' บิล · ไม่สำเร็จ '+failN+' บิล — กด "อนุมัติทั้งหมด" ซ้ำอีกครั้ง');
+  else toast('ok','✓ อนุมัติ '+okN+' บิลแล้ว');
 }
 
 function adminSwitchRole(){
@@ -3105,6 +3160,16 @@ async function restoreBill(id){
   var idx=records.findIndex(function(r){return r.id===id;});
   if(idx<0) return;
   var billName = records[idx].bill;
+  /* v1.17: ส่งขึ้นระบบให้สำเร็จก่อน ค่อยกู้คืนในเครื่อง (เดิมยิงคลาวด์ท้ายสุดแบบไม่เช็ค error) */
+  if(db){
+    try{
+      await dbRun(db.rpc('update_delivery',{rec_id:id,updates:{status:'active'}}),'กู้คืนบิล');
+    }catch(e){
+      console.warn('Cloud restore failed:',e);
+      toast('err','❌ กู้คืนไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดใหม่');
+      return;
+    }
+  }
   records[idx].status='active';
   // Log restore action
   var logEntry = {
@@ -3118,9 +3183,6 @@ async function restoreBill(id){
   restoreLogs.unshift(logEntry);
   localStorage.setItem('kmmh_restore_logs', JSON.stringify(restoreLogs));
   save();
-  if(db){
-    try{ await db.rpc('update_delivery',{rec_id:id,updates:{status:'active'}}); }catch(e){ console.warn('Cloud restore failed:',e.message); }
-  }
   renderAdmin(); updatePendingBadge(); updateTodaySub();
   toast('ok','↩️ กู้คืนบิล '+billName+' สำเร็จ');
 }
@@ -3585,6 +3647,17 @@ async function confirmEdit(){
   var newDest = document.getElementById('editDest').value.trim();
   var newNote = document.getElementById('editNote').value.trim();
 
+  /* v1.17: ส่งขึ้นระบบให้สำเร็จก่อน ค่อยแก้ในเครื่อง — ถ้าไม่สำเร็จโมดอลยังเปิดอยู่ กดบันทึกซ้ำได้เลย */
+  if(db){
+    try{
+      await dbRun(db.rpc('update_delivery',{rec_id:_editTarget,updates:{bill:newBill,dest:newDest,note:newNote,date:newDateISO}}),'แก้ไขบิล');
+    }catch(e){
+      console.warn('Edit cloud sync failed:', e);
+      toast('err','❌ แก้ไขไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดบันทึกใหม่');
+      return;
+    }
+  }
+
   records[idx].bill = newBill;
   records[idx].dest = newDest;
   records[idx].note = newNote;
@@ -3613,13 +3686,6 @@ async function confirmEdit(){
   localStorage.setItem('kmmh_restore_logs', JSON.stringify(logs));
 
   save();
-
-  // Sync to cloud
-  if(db){
-    try{
-      await db.rpc('update_delivery',{rec_id:_editTarget,updates:{bill:newBill,dest:newDest,note:newNote,date:newDateISO}});
-    }catch(e){ console.warn('Edit cloud sync failed:', e.message); }
-  }
 
   closeEditModal();
   renderHistory();
@@ -3689,24 +3755,25 @@ async function confirmDel(){
     var cancelId = delTarget;
     var idx = records.findIndex(function(r){return r.id===cancelId;});
     if(idx>=0){
-      if(currentRole==='owner'){
-        // เจ้าของ = ยกเลิกเหมือนกัน (soft) แต่ระบุว่าเจ้าของเป็นคนยกเลิก
-        records[idx].status = 'cancelled';
-        records[idx].cancelledBy = 'owner';
-        records[idx].cancelledAt = new Date().toISOString();
-      } else {
-        // คนขับ/แอดมิน = soft cancel
-        records[idx].status = 'cancelled';
-        records[idx].cancelledBy = 'driver';
-        records[idx].cancelledAt = new Date().toISOString();
-      }
-      save();
-  tgCancelBill(records[idx]);
+      var cBy = (currentRole==='owner') ? 'owner' : 'driver';
+      var cAt = new Date().toISOString();
+      /* v1.17: ส่งขึ้นระบบให้สำเร็จก่อน ค่อยยกเลิกในเครื่อง + ค่อยแจ้ง Telegram
+         เดิมยกเลิกในเครื่อง+ยิง Telegram ทันทีแล้วค่อยยิงคลาวด์แบบไม่เช็ค error
+         → เน็ตหลุด = กลุ่มหน้างานเห็น "ยกเลิกบิล" แต่ระบบยังนับบิลนี้อยู่ */
       if(db){
         try{
-          await db.rpc('update_delivery',{rec_id:cancelId,updates:{status:'cancelled',cancelled_by:records[idx].cancelledBy,cancelled_at:records[idx].cancelledAt}});
-        }catch(e){ console.warn('Cloud cancel failed:',e.message); }
+          await dbRun(db.rpc('update_delivery',{rec_id:cancelId,updates:{status:'cancelled',cancelled_by:cBy,cancelled_at:cAt}}),'ยกเลิกบิล');
+        }catch(e){
+          console.warn('Cloud cancel failed:',e);
+          toast('err','❌ ยกเลิกไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดใหม่');
+          return;
+        }
       }
+      records[idx].status = 'cancelled';
+      records[idx].cancelledBy = cBy;
+      records[idx].cancelledAt = cAt;
+      save();
+      tgCancelBill(records[idx]);
     }
     closeDelModal(); renderHistory(); renderPending(); updateTodaySub(); updatePendingBadge();
     toast('ok','ยกเลิกบิลแล้ว');
