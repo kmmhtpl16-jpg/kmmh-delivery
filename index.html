@@ -741,7 +741,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.14</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.15</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1515,6 +1515,24 @@ function delivTypeOf(r){
 function typeLabelOf(r){ var t=delivTypeOf(r); return t==='receive'?'📦 รับสินค้า':(t==='upk'?'🏢 UPK':(t==='klang'?'🏭 ส่งคลัง':'🚚 ส่งลูกค้า')); }
 function typeBadgeOf(r){ var t=delivTypeOf(r); return t==='receive'?'b-purple':(t==='upk'?'b-blue':(t==='klang'?'b-green':'b-orange')); }
 
+/* 💰 แยก "ค่าเที่ยวพื้นฐาน" กับ "โบนัส" ของแต่ละคน จากยอดที่บันทึกไว้จริง
+   ⚠️ ห้ามคิดเรต 40/20 เองอีก — ส่งคลัง=฿0 ล้วน · รับสินค้า/UPK=ไม่มีฐาน · บิลที่หัก 50% ต้องสะท้อนด้วย
+   (20ส.ค.69: กราฟรายคน + Excel Sheet 2 เคยคิดเรตเอง เลยโชว์เกินจริง ~35% และ Excel ไม่หัก 50%) */
+function payParts(r){
+  var nA = 1 + ((r.helpers||[]).length);
+  var f  = r.incomplete ? 0.5 : 1;
+  var bPP = (r.brickPP!==null && r.brickPP!==undefined && r.brickPP!=='')
+              ? (+r.brickPP||0)
+              : ((+r.brickTotal||0)/(nA||1));
+  var bonus = (bPP + (+r.extraPP||0)) * f;
+  function split(total){
+    var t = +total||0;
+    var bo = bonus; if(bo>t) bo=t; if(bo<0) bo=0;   // โบนัสห้ามเกินยอดจริง (บิลเก่า/ข้อมูลไม่ครบ)
+    return { base:t-bo, bonus:bo, total:t };
+  }
+  return { drv:split(r.driverTotal), hlp:split(r.helperTotal) };
+}
+
 // Convert DB row → app record
 function dbToRec(row){
   return {
@@ -2061,6 +2079,14 @@ function compressImage(file, callback){
 // Upload photo to Supabase Storage, return URL or null
 function _sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
+/* ป้ายที่คำนวณจากเนื้อรูปทั้งใบ (ความยาว + แฮช 2 ตัว) — รูปเดียวกันได้ป้ายเดิมเสมอ
+   ใช้ตั้งชื่อไฟล์ให้การอัปซ้ำทับที่เดิมแทนที่จะสร้างไฟล์ใหม่
+   อ่านครบทุกตัวอักษร (base64 รูปละ ~2 แสนตัว ใช้เวลาไม่ถึง 5 ms) — เคยลองสุ่มอ่านแล้วป้ายชนกันได้ */
+function _photoTag(b64){
+  var s = b64 || '', h1 = 5381, h2 = 52711, i = s.length;
+  while(i--){ var ch = s.charCodeAt(i); h1 = ((h1*33) ^ ch) >>> 0; h2 = ((h2*31) + (ch*(i&255)+i)) >>> 0; }
+  return s.length.toString(36) + h1.toString(36) + h2.toString(36);
+}
 async function uploadPhotoToStorage(base64, filename){
   if(!db) return null;
   var blob, path, uploadUrl2;
@@ -2071,7 +2097,12 @@ async function uploadPhotoToStorage(base64, filename){
     var u8arr = new Uint8Array(n);
     while(n--){ u8arr[n] = bstr.charCodeAt(n); }
     blob = new Blob([u8arr], {type: mime});
-    path = filename+'_'+Date.now()+'.jpg';
+    /* 🔑 ชื่อไฟล์ต้อง "คงที่ตามเนื้อรูป" — เดิมใช้ Date.now() ทุกครั้งที่เรียก
+       ทำให้การอัปซ้ำ (retry / auto-sync ที่ยิงหลายรอบ) สร้างไฟล์ใหม่ทุกรอบแทนที่จะทับของเดิม
+       ผลตรวจ 20ส.ค.69: รูปซ้ำ 324 ชุด กินพื้นที่ฟรี 116 MB (19% ของถัง) และบางบิลโชว์รูปเดิมซ้ำ 2 ใบ
+       ตอนนี้: รูปเดิม→ป้ายเดิม→ทับที่เดิม (upsert) · รูปคนละใบ→คนละป้าย→ไม่ทับกัน
+       ⚠️ ต้องมี "_" คั่นท้ายลำดับรูปเสมอ ไม่งั้น trigger trg_link_delivery_photo จะไม่รู้จักชื่อไฟล์ */
+    path = filename+'_'+_photoTag(base64)+'.jpg';
     uploadUrl2 = SUPABASE_URL+'/storage/v1/object/delivery-photos/'+path;
   }catch(e){ console.warn('Photo decode failed:', e.message); return null; }
   // 🔁 ลองอัปซ้ำสูงสุด 3 ครั้ง (กันเน็ตหลุดชั่วคราว) — ใช้ path เดิม + x-upsert กันไฟล์ซ้ำ
@@ -2130,26 +2161,37 @@ function checkPhotoUpload(label, sentCount, urls, rec){
 }
 
 // Sync pending base64 photos to storage (called on syncAll)
+var _syncPhotosBusy = false;   // 🔒 กันวิ่งซ้อน — checkPhotoUpload ตั้งนาฬิกาไว้ 4 รอบ + startApp ยิงอีก 1
+function _hasPending(a){ return (a||[]).some(function(p){ return p && typeof p==='string' && p.indexOf('data:')===0; }); }
 async function syncPendingPhotos(){
   if(!db) return;
+  if(_syncPhotosBusy) return;
+  _syncPhotosBusy = true;
   var updated = false;
-  for(var i=0;i<records.length;i++){
-    var r = records[i];
-    var needSync = false;
-    // Check photosBefore
-    if(r.photosBefore && r.photosBefore.some(function(p){return p&&p.startsWith('data:');})){
-      records[i].photosBefore = await uploadPhotos(r.photosBefore, 'before_'+r.id);
-      needSync = true;
+  try{
+    var todo = records.filter(function(r){ return r && (_hasPending(r.photosBefore) || _hasPending(r.photosAfter)); })
+                      .map(function(r){ return r.id; });
+    for(var k=0;k<todo.length;k++){
+      var id = todo[k];
+      /* ⚠️ ห้ามจำตำแหน่ง records[i] ข้าม await — refreshFromCloud สลับ records ทั้งก้อนได้
+         (เคยเสี่ยงเอารูปบิล A ไปแปะบิล B) → หาใหม่จาก id ทุกครั้งหลัง await */
+      var r = records.find(function(x){ return x && x.id===id; });
+      if(!r) continue;
+      var needSync = false;
+      if(_hasPending(r.photosBefore)){
+        var ub = await uploadPhotos(r.photosBefore, 'before_'+id);
+        r = records.find(function(x){ return x && x.id===id; }); if(!r) continue;
+        r.photosBefore = ub; needSync = true;
+      }
+      if(_hasPending(r.photosAfter)){
+        var ua = await uploadPhotos(r.photosAfter, 'after_'+id);
+        r = records.find(function(x){ return x && x.id===id; }); if(!r) continue;
+        r.photosAfter = ua; needSync = true;
+      }
+      if(needSync){ await saveToCloud(r); updated = true; }
     }
-    // Check photosAfter
-    if(r.photosAfter && r.photosAfter.some(function(p){return p&&p.startsWith('data:');})){
-      records[i].photosAfter = await uploadPhotos(r.photosAfter, 'after_'+r.id);
-      needSync = true;
-    }
-    if(needSync){
-      await saveToCloud(records[i]);
-      updated = true;
-    }
+  } finally {
+    _syncPhotosBusy = false;
   }
   if(updated){ save(); toast('ok','☁️ ซิงค์รูปภาพขึ้น Cloud สำเร็จ'); }
 }
@@ -4192,7 +4234,7 @@ function renderReport(){
   }
   document.getElementById('rTrip').textContent='฿'+Math.round(f.reduce(function(s,r){return s+(r.tripTotal||0);},0)).toLocaleString();
   document.getElementById('rDone').textContent=f.filter(function(r){return r.step2Done;}).length;
-  document.getElementById('rBonus').textContent='฿'+Math.round(f.reduce(function(s,r){return s+(r.brickTotal||0)+((r.extraPP||0)*(1+(r.helpers||[]).length));},0)).toLocaleString();
+  document.getElementById('rBonus').textContent='฿'+Math.round(f.reduce(function(s,r){return s+((r.brickTotal||0)+((r.extraPP||0)*(1+(r.helpers||[]).length)))*(r.incomplete?0.5:1);},0)).toLocaleString();
   // Calculate distances from GPS coords
   var distTotal=0, distCount=0, distRows='';
   f.forEach(function(r){
@@ -4220,11 +4262,9 @@ function renderReport(){
     renderDistPage(0);
   var empMap={};
   f.forEach(function(r){
-    var nA=1+(r.helpers||[]).length;
-    var incF=(r.incomplete?0.5:1);
-    var bPP=(r.brickTotal||0)/nA, ePP=r.extraPP||0;
-    function add(n,base){ if(!empMap[n])empMap[n]={t:0,base:0,bonus:0}; empMap[n].t++; empMap[n].base+=base*incF; empMap[n].bonus+=(bPP+ePP)*incF; }
-    add(r.driver,40); (r.helpers||[]).forEach(function(h){add(h,20);});
+    var pp=payParts(r);   // อ่านยอดจริงที่บันทึกไว้ ไม่คิดเรตเอง
+    function add(n,q){ if(!n) return; if(!empMap[n])empMap[n]={t:0,base:0,bonus:0}; empMap[n].t++; empMap[n].base+=q.base; empMap[n].bonus+=q.bonus; }
+    add(r.driver,pp.drv); (r.helpers||[]).forEach(function(h){add(h,pp.hlp);});
   });
   var ea=Object.entries(empMap).sort(function(a,b){return (b[1].base+b[1].bonus)-(a[1].base+a[1].bonus);});
   var mxE=Math.max(1,...ea.map(function(x){return x[1].base+x[1].bonus;}));
@@ -4386,13 +4426,13 @@ function exportExcel(){
   // ---- Sheet 2: สรุปรายคน ----
   var empMap = {};
   data.forEach(function(r){
-    var nA = 1+(r.helpers||[]).length;
-    var bPP = (r.brickTotal||0)/nA, ePP = r.extraPP||0;
-    function add(n,base){
+    var pp = payParts(r);   // อ่านยอดจริงที่บันทึกไว้ (รวมการหัก 50% แล้ว) ไม่คิดเรตเอง
+    function add(n,q){
+      if(!n) return;
       if(!empMap[n]) empMap[n]={trips:0,base:0,bonus:0};
-      empMap[n].trips++; empMap[n].base+=base; empMap[n].bonus+=bPP+ePP;
+      empMap[n].trips++; empMap[n].base+=q.base; empMap[n].bonus+=q.bonus;
     }
-    add(r.driver,40); (r.helpers||[]).forEach(function(h){add(h,20);});
+    add(r.driver,pp.drv); (r.helpers||[]).forEach(function(h){add(h,pp.hlp);});
   });
   var headers2 = ['ชื่อพนักงาน','จำนวนเที่ยว','ค่าเที่ยวพื้นฐาน (฿)','โบนัสพิเศษ (฿)','รวมทั้งสิ้น (฿)'];
   var rows2 = [headers2];
