@@ -741,7 +741,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.15</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.16</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1339,6 +1339,27 @@ function mergePendingPhotos(fresh){
   }catch(e){ console.warn('mergePendingPhotos',e); }
   return fresh;
 }
+/* 🔒 กันบิลที่ "ยังไม่ขึ้นคลาวด์" หายตอนดึงข้อมูลใหม่ (แก้ 20ส.ค.69 v1.16)
+   เดิม refreshFromCloud เอาข้อมูลคลาวด์มาทับทั้ง records และ localStorage
+   → บิลที่บันทึกตอนเน็ตหลุด (ตอนนั้นเด้ง "ข้อมูลอยู่ในเครื่อง" คนขับสบายใจ) หายเกลี้ยงเมื่อเปิดแอปใหม่ กู้ไม่ได้
+   ฝั่งน้ำมัน loadFuelFromCloud ทำถูกอยู่แล้ว (คง localOnly ไว้) ตรงนี้คือจุดที่ลืม
+   ✅ ปลอดภัย: ทั้งไฟล์ไม่มีที่ไหนลบบิลออกจาก records เลย (ยกเลิก = soft cancel เก็บแถวไว้)
+      จึงไม่มีทางที่บิลซึ่งถูกลบแล้วจะฟื้นกลับมา */
+var _localOnlyIds = [];   // id ของบิลที่คลาวด์ยังไม่มี (อัปเดตทุกครั้งที่ดึงข้อมูล)
+function mergeLocalOnly(fresh){
+  try{
+    if(!Array.isArray(fresh)) return fresh;
+    var inCloud={}; fresh.forEach(function(r){ if(r&&r.id!=null) inCloud[r.id]=true; });
+    var extra=(records||[]).filter(function(r){ return r && r.id!=null && !inCloud[r.id]; });
+    _localOnlyIds = extra.map(function(r){ return r.id; });
+    if(!extra.length) return fresh;
+    console.warn('บิลที่ยังไม่ขึ้นคลาวด์ '+extra.length+' ใบ — คงไว้ในเครื่องแล้วลองส่งใหม่');
+    if(typeof toast==='function') toast('err','⚠️ มีบิลที่ยังไม่ขึ้นระบบ '+extra.length+' ใบ — กำลังลองส่งใหม่ (อย่าเพิ่งล้างข้อมูลเครื่อง)');
+    if(db){ extra.forEach(function(r){ try{ saveToCloud(r); }catch(e){} }); }
+    return fresh.concat(extra);
+  }catch(e){ console.warn('mergeLocalOnly',e); return fresh; }
+}
+
 // ดึงข้อมูลล่าสุดจาก cloud เบื้องหลัง
 async function refreshFromCloud(){
   if(!db){ initSupabase(); }
@@ -1350,6 +1371,7 @@ async function refreshFromCloud(){
     if(res.data && Array.isArray(res.data)){
       var fresh = res.data.map(dbToRec);
       fresh = mergePendingPhotos(fresh); // 🔒 กันรูป base64 ที่ยังอัปไม่ขึ้นถูกเขียนทับด้วยข้อมูล cloud
+      fresh = mergeLocalOnly(fresh);     // 🔒 กันบิลที่ยังไม่ขึ้นคลาวด์หายไปกับการทับข้อมูล
       var freshJSON = JSON.stringify(fresh);
       localStorage.setItem(KEY, freshJSON);                 // เก็บลง cache เสมอ
       if(freshJSON !== JSON.stringify(records)){             // mitigation 2: อัปเดตเฉพาะตอนเปลี่ยนจริง
@@ -4360,15 +4382,28 @@ async function syncAll(){
     return;
   }
   if(!records.length){ toast('err','ยังไม่มีข้อมูล'); return; }
-  toast('ok','☁️ กำลังซิงค์ '+records.length+' บิล...');
+  toast('ok','☁️ กำลังซิงค์...');
   try{
-    var rows = records.map(recToDb);
-    for(var i=0;i<rows.length;i++){ await db.rpc('upsert_delivery',{rec:rows[i]}); }
-    toast('ok','☁️ ซิงค์ '+records.length+' บิลสำเร็จ');
-    // Also sync any pending base64 photos
+    /* ⚠️ ห้ามยิง records ทั้งชุดทับคลาวด์ (แก้ 20ส.ค.69 v1.16)
+       เดิม: วน upsert_delivery ทุกบิลจากข้อมูลในเครื่อง — เครื่องที่เปิดแอปค้างไว้ตั้งแต่เช้า
+       (ไม่มี setInterval ดึงข้อมูลใหม่เลย) จะเอาข้อมูลเช้ามาทับงานที่คนอื่นทำระหว่างวัน
+       เพราะ upsert_delivery ทับทุกคอลัมน์หลัก → step2_done กลับเป็น false, เวลาถึง/รูปหลังส่งหาย
+       ใหม่: ดึงของใหม่ลงมาก่อน แล้วส่งขึ้นเฉพาะ "บิลที่คลาวด์ยังไม่มี" + รูปที่ยังค้าง
+       และเช็ก res.error จริง (supabase-js ไม่ throw — เดิม catch ไม่มีวันทำงาน เลยขึ้น "สำเร็จ" ตลอด) */
+    await refreshFromCloud();
+    var ids = _localOnlyIds.slice(), okN = 0, failN = 0;
+    for(var i=0;i<ids.length;i++){
+      var rec = records.find(function(x){ return x && x.id===ids[i]; });
+      if(!rec) continue;
+      var res = await db.rpc('upsert_delivery',{rec:recToDb(rec)});
+      if(res && res.error){ failN++; console.warn('syncAll:', res.error.message); } else { okN++; }
+    }
     await syncPendingPhotos();
+    if(failN) toast('err','☁️ ส่งขึ้นระบบไม่สำเร็จ '+failN+' บิล — เช็คเน็ตแล้วกดซิงค์อีกครั้ง');
+    else if(okN) toast('ok','☁️ ส่งบิลที่ค้าง '+okN+' ใบขึ้นระบบแล้ว');
+    else toast('ok','☁️ ข้อมูลตรงกับระบบแล้ว ไม่มีบิลค้าง');
   }catch(e){
-    toast('err','ซิงค์ไม่สำเร็จ: '+e.message);
+    toast('err','ซิงค์ไม่สำเร็จ: '+((e&&e.message)||e));
   }
 }
 

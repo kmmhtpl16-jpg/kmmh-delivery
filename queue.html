@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.7 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.8 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -220,6 +220,31 @@ var _doneTotal=null, _cancelTotal=null, _allCancelLoaded=false;  // ยังไ
       กันไว้ 2 ชั้น: (1) save() ข้ามบิลที่อยู่ใน _liteIds  (2) restoreBooking() hydrate ก่อนแก้เสมอ
    เก็บธงไว้ "นอก" ตัวบิล (side map) ไม่ยัดคีย์แปลกปลอมลง object → JSON เทียบกับ _cloudSnap ได้สะอาด
    และไม่มีทางหลุดไปเขียนลง data ในฐานข้อมูล */
+/* 🛡️ ธง "ได้ข้อมูลสดจากคลาวด์แล้วหรือยัง" (เพิ่ม 20ส.ค.69)
+   ช่องโหว่เดิม: หน้าเปิดมาใช้ state จาก localStorage ซึ่งเป็นสำเนาที่ "ตัด attach ทิ้งแล้ว"
+   ถ้าคลาวด์มาไม่ทัน 4 วิ (หรือโหลดล้ม) หน้าจะใช้งานได้ตามปกติ ทั้งที่ _liteIds/_cloudSnap ยังว่าง
+   → save() ครั้งเดียวจะ upsert ทั้งชุดขึ้นไปโดยไม่มีไฟล์แนบ = ไฟล์แนบหายยกชุด + สถานะเก่าทับของสด
+   ด่านกัน 2 ชั้นเดิมพึ่ง _liteIds ตัวเดียวกันทั้งคู่ จึงไม่ครอบช่วงเวลานี้ */
+var _cloudLoaded=false;
+function markCloudWarn(on){
+  try{
+    var el=document.getElementById('cloudWarn');
+    if(!el){
+      if(!on) return;
+      el=document.createElement('div'); el.id='cloudWarn';
+      el.style.cssText='background:#fdecea;border:1px solid #f5b5ae;color:#a3271b;border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:13px;font-weight:600;line-height:1.5';
+      var w=document.querySelector('.wrap'); if(w) w.insertBefore(el, w.children[1]||null);
+    }
+    el.innerHTML='⚠️ ยังโหลดข้อมูลล่าสุดจากระบบไม่สำเร็จ — ตอนนี้<u>ยังบันทึกขึ้นระบบไม่ได้</u> (กันไฟล์แนบ/สถานะหาย)<br>กรุณาเช็คอินเทอร์เน็ตแล้วรีเฟรชหน้านี้ครับ';
+    el.style.display = on ? 'block' : 'none';
+  }catch(e){}
+}
+function requireCloud(){
+  if(_cloudLoaded) return true;
+  markCloudWarn(true);
+  alert('⚠️ ยังโหลดข้อมูลล่าสุดจากระบบไม่สำเร็จ\n\nตอนนี้ยังบันทึกขึ้นระบบไม่ได้ (กันข้อมูลและไฟล์แนบหาย)\nกรุณาเช็คอินเทอร์เน็ตแล้วรีเฟรชหน้านี้ก่อนครับ');
+  return false;
+}
 var _liteIds={};      // id -> true  = บิลที่โหลดมาแบบไม่มีไฟล์แนบ
 var _attachMeta={};   // id -> {type,name} = รู้ว่ามีไฟล์แนบ แต่ยังไม่ได้โหลดตัวไฟล์
 var _hydrating={};    // id -> true  = กำลังโหลดไฟล์แนบอยู่ (กันกดซ้ำ)
@@ -258,6 +283,12 @@ async function ensureSession(){
 }
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
+  // 🛡️ ยังไม่ได้ข้อมูลสดจากคลาวด์ = ของในมือมาจากแคชที่ตัดไฟล์แนบทิ้งแล้ว → ห้ามยิงขึ้นเด็ดขาด
+  if(db && !_cloudLoaded){
+    console.warn('save: ยังโหลดข้อมูลจากคลาวด์ไม่สำเร็จ — ไม่ยิงขึ้นระบบ (กันไฟล์แนบหาย)');
+    markCloudWarn(true);
+    return Promise.resolve();
+  }
   if(db){
     // อัปเฉพาะบิลที่ต่างจากที่โหลดมาจาก cloud (บิลที่เครื่องนี้แก้จริง) — ไม่ยกทั้งชุดไปทับของสดคนอื่น
     var rows=[], js=[];
@@ -407,6 +438,7 @@ async function loadCloud(){
     if(r&&r.data){
       state.bookings=r.data.map(function(x){return x.data;}).filter(Boolean);
       _cloudSnap={}; state.bookings.forEach(function(b){ _cloudSnap[b.id]=JSON.stringify(b); });
+      _cloudLoaded=true; markCloudWarn(false);   // ✅ ของในมือครบแล้ว เขียนกลับได้
       /* เก็บสำเนาสดไว้ในเครื่อง (ไว้โชว์ชั่วคราวตอนเน็ตช้า/หลุด)
          ⚠️ เก็บทั้งชุดไม่ได้ — รูปแนบ (attach) ทำให้ข้อมูลโต ~20MB เกินโควตา localStorage (5MB)
          แล้ว setItem จะ throw เงียบๆ ทำให้สำเนาในเครื่องค้างของเก่าเป็นปีๆ
@@ -646,6 +678,7 @@ async function saveBooking(){
   if(_onHold){ _st='onhold'; }
   else if(_delivDate > _today){ _st='postponed'; _newDate=_delivDate; }
   else { _st='booked'; }
+  if(!requireCloud()) return;   // ห้ามสร้างจองใหม่ตอนที่ยังส่งขึ้นระบบไม่ได้ (จะดูเหมือนจองแล้วแต่จริงๆ ไม่เข้า)
   if(bill){
     if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
     // 📉 17ส.ค.69: เดิม select('data') = ดาวน์โหลดบิลทั้ง 237 ใบพร้อมรูปแนบ ~23MB
@@ -752,6 +785,7 @@ function askDeliveryLocation(id){
   setTimeout(function(){ if(_map&&b&&b.lat){ L.circleMarker([b.lat,b.lng],{radius:7,color:'#7c3aed',fillColor:'#c4b5fd',fillOpacity:.9}).addTo(_map).bindTooltip('จุดที่จองไว้'); } },450);
 }
 function completeDelivery(id,latlng){
+  if(!requireCloud()) return;
   var b=find(id); if(!b) return;
   b.status='done'; b.deliveredAt=Date.now(); b.drvLat=latlng.lat; b.drvLng=latlng.lng;
   b.gap=haversine(b.lat,b.lng,latlng.lat,latlng.lng); (function(){var th=state.threshold||2;var g=b.gap;var gtxt=(g<=th)?('✓ ตรงจุด ('+fmtkm(g)+')'):('⚠️ ห่างจุดจอง '+fmtkm(g));sendTelegram('✅ <b>ส่งสำเร็จ</b>\n🧾 บิล: '+b.bill+(b.customer?('\n👤 '+b.customer):'')+'\n'+gtxt,QUEUE_CHAT);})();
@@ -763,6 +797,7 @@ function showPostpone(){ var d=new Date(); document.getElementById('postponeDate
 function hidePostpone(){ document.getElementById('cancelMain').style.display='block'; document.getElementById('postponeBox').style.display='none'; }
 function closeCancel(){ document.getElementById('cancelModal').classList.remove('show'); }
 function applyCancel(kind){
+  if(!requireCloud()){ closeCancel(); return; }
   var b=find(_cancelId); if(!b){ closeCancel(); return; }
   if(kind==='order'){ b.status='cancel'; b.cancelReason='ลูกค้ายกเลิกออเดอร์'; }
   else if(kind==='postpone'){ b.status='postponed'; var nd=document.getElementById('postponeDate').value; b.newDate=nd||''; if(nd) b.deliveryDate=nd; b.cancelReason='เลื่อนวันส่ง'+(nd?(' → '+fmtDate(nd)):''); }
@@ -772,6 +807,7 @@ function applyCancel(kind){
   save(); closeCancel(); renderQueue();
 }
 async function restoreBooking(id){
+  if(!requireCloud()) return;
   var b=find(id); if(!b) return;
   // บิลยกเลิกโหลดมาแบบไม่มีไฟล์แนบ → ต้องดึงของครบก่อนแก้ ไม่งั้นเขียนกลับแล้วไฟล์แนบหาย
   if(_liteIds[id]){
@@ -1002,7 +1038,7 @@ function resetAll(){
   if(state.store){ var sb=document.getElementById('fStoreBtn'); sb.classList.add('has'); sb.textContent='🏠 ตั้งจุดร้านแล้ว ('+state.store.lat.toFixed(4)+', '+state.store.lng.toFixed(4)+')'; }
   initDB();
   renderQueue();
-  setTimeout(function(){ if(_cloudPending){ _cloudPending=false; renderQueue(); } }, 4000);
+  setTimeout(function(){ if(_cloudPending){ _cloudPending=false; markCloudWarn(!_cloudLoaded); renderQueue(); } }, 4000);
   (async function(){ await ensureSession(); loadCloud(); loadConfig(); })();
 })();
 </script>
