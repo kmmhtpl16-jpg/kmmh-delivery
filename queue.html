@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.8 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.9 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -360,7 +360,7 @@ async function qShareTrackLink(bill){
 async function loadConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:null; if(!c) return; _qbCfg=c; state.favorites=Array.isArray(c.favorites)?c.favorites:(state.favorites||[]); renderFavBar(); if(c.threshold!=null){ state.threshold=parseFloat(c.threshold)||2; var ft=document.getElementById('fThreshold'); if(ft) ft.value=state.threshold; } if(c.storeLat!=null&&c.storeLng!=null){ state.store={lat:c.storeLat,lng:c.storeLng}; } else if(state.store&&state.store.lat){ try{ db.from('qb_config').upsert({id:'main',data:Object.assign({},c,{storeLat:state.store.lat,storeLng:state.store.lng})}); }catch(e){} } try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} renderQueue(); }catch(e){ console.warn('cfg',e); } }
 /* ดึงบิลที่ปิดแล้ว — src='bookings_lite' คือแบบไม่มีไฟล์แนบ (เบากว่า 161 เท่า) */
 function closedQuery(src,st,lim){
-  var cols=(src==='bookings_lite')?'data,attach_type,attach_name':'data';
+  var cols=(src==='bookings_lite')?'data,attach_type,attach_name,attach_thumb':'data';   // v2.9: +รูปย่อ ~2-4KB/ใบ
   return db.from(src).select(cols).eq('status',st).order('created_at',{ascending:false}).limit(lim);
 }
 /* โหลดไฟล์แนบของบิลใบเดียว (เรียกตอนผู้ใช้กดดูจริงเท่านั้น) */
@@ -427,7 +427,7 @@ async function loadCloud(){
           ((res&&res.data)||[]).forEach(function(x){
             if(!x||!x.data||!x.data.id) return;
             _liteIds[x.data.id]=true;
-            if(x.attach_type||x.attach_name) _attachMeta[x.data.id]={type:x.attach_type||'image', name:x.attach_name||''};
+            if(x.attach_type||x.attach_name||x.attach_thumb) _attachMeta[x.data.id]={type:x.attach_type||'image', name:x.attach_name||'', thumb:(_isThumb(x.attach_thumb)?x.attach_thumb:'')};
           });
         });
       }
@@ -549,6 +549,33 @@ function parseDestLink(){
   if(isShortLink(t)){ resolveShort(t); return; }
   s.innerHTML='ยังอ่านพิกัดไม่ได้ — วางลิงก์ Google Maps แบบเต็ม หรือพิมพ์เป็น 14.123, 100.456'; s.style.color='var(--orange)';
 }
+/* 🖼️ รูปย่อบนการ์ด (เพิ่ม 20ส.ค.69 v2.9)
+   การ์ดโชว์รูปแค่ 54×54 px แต่ไฟล์แนบจริงใบละ ~110KB
+   ตั้งแต่ v2.7 บิลที่ปิดแล้วเลยไม่ดึงรูปมาเลยเพื่อประหยัดเน็ต (เปิดหน้า 1.73MB → 10.7KB)
+   ผลข้างเคียงคือรูปหายไปกลายเป็นปุ่ม "แตะดูไฟล์แนบ" ซึ่งดูงานยากขึ้น
+   ทางสายกลาง = เก็บ "รูปย่อ" กว้าง 96px ไว้ในบิลด้วย (ใบละ ~2-4KB) โชว์บนการ์ดได้ทันที
+   ถ้าอยากดูชัดค่อยแตะที่รูปย่อ แล้วระบบจึงโหลดรูปเต็มมาให้ */
+function _makeThumb(dataUrl, cb){
+  try{
+    var img=new Image();
+    img.onload=function(){
+      try{
+        var MAX=96,w=img.width,h=img.height;
+        if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} else if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
+        var c=document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        cb(c.toDataURL('image/jpeg',0.55));
+      }catch(e){ console.warn('thumb',e); cb(null); }
+    };
+    img.onerror=function(){ cb(null); };   // ทำรูปย่อไม่ได้ = ไม่เป็นไร ถอยไปใช้ปุ่มเหมือนเดิม
+    img.src=dataUrl;
+  }catch(e){ cb(null); }
+}
+/* รูปย่อถูกยัดลง HTML ตรงๆ (src="...") จึงต้องรับเฉพาะ data URL รูปภาพ base64 เท่านั้น
+   กันสตริงแปลกปลอมจาก DB หลุดออกจาก attribute ไปเป็นโค้ด */
+function _isThumb(t){
+  return typeof t==='string' && t.length<60000 && /^data:image\/[a-z]+;base64,[A-Za-z0-9+\/=]+$/.test(t);
+}
 function onAttach(input){
   var f=input.files[0]; if(!f) return;
   var chip=document.getElementById('fFileChip'), prev=document.getElementById('fPhotoPrev');
@@ -575,6 +602,8 @@ function onAttach(input){
       var data=c.toDataURL('image/jpeg',0.8);
       _pendingAttach={type:'image',data:data,name:f.name};
       prev.src=data;prev.style.display='block';
+      // v2.9: ทำรูปย่อแนบไปกับบิลด้วย (ถ้าทำไม่ทัน/ไม่สำเร็จ ก็บันทึกได้ตามปกติ แค่ไม่มีรูปย่อ)
+      _makeThumb(data,function(t){ if(t && _pendingAttach && _pendingAttach.data===data) _pendingAttach.thumb=t; });
     };
     img.src=e.target.result;
   };
@@ -945,8 +974,12 @@ function card(b,showChk,together){
   h+='</div><div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">'+tags+'</div></div>';
   if(b.cancelReason) h+='<div class="meta" style="color:var(--orange)">📌 '+b.cancelReason+'</div>';
   if(b.attach){ if(b.attach.type==='pdf') h+='<div class="filechip">📄 <a href="'+b.attach.data+'" target="_blank" style="color:#991b1b">'+(b.attach.name||'ไฟล์ PDF')+'</a></div>'; else h+='<img class="photo" src="'+b.attach.data+'">'; }
-  else if(_attachMeta[b.id]){ /* บิลปิดแล้ว: ยังไม่โหลดไฟล์แนบ (ประหยัดเน็ต) กดแล้วค่อยโหลด */
-    h+='<div class="filechip">'+(_attachMeta[b.id].type==='pdf'?'📄':'🖼️')+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="event.stopPropagation();loadAttach(\''+b.id+'\',event)">แตะดูไฟล์แนบ'+shortName(_attachMeta[b.id].name)+'</button></div>'; }
+  else if(_attachMeta[b.id]){ /* บิลปิดแล้ว: ยังไม่โหลดไฟล์แนบเต็ม (ประหยัดเน็ต) */
+    var _am=_attachMeta[b.id];
+    if(_am.thumb) /* v2.9: มีรูปย่อ = เห็นรูปได้เลย แตะที่รูปถึงจะโหลดรูปเต็ม */
+      h+='<img class="photo" src="'+_am.thumb+'" title="แตะเพื่อดูรูปเต็ม" onclick="event.stopPropagation();loadAttach(\''+b.id+'\',event)">';
+    else
+      h+='<div class="filechip">'+(_am.type==='pdf'?'📄':'🖼️')+' <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="event.stopPropagation();loadAttach(\''+b.id+'\',event)">แตะดูไฟล์แนบ'+escHtml(shortName(_am.name))+'</button></div>'; }
   if(b.status==='done' && b.gap!=null){
     var th=state.threshold||2;
     if(b.gap<=th) h+='<div class="gap-ok">✓ ส่งตรงจุด — ห่างจากที่จอง '+fmtkm(b.gap)+'</div>';
@@ -985,7 +1018,10 @@ function showDetail(id){
     html+=(b.gap<=th?'<div class="gap-ok">&#10003; ส่งตรงจุด ':'<div class="gap-warn">&#9888;&#65039; ส่งห่างจากที่จอง ')+fmtkm(b.gap)+'</div>';
   }
   if(b.attach){ if(b.attach.type==='pdf') html+='<div class="filechip">&#128196; <a href="'+b.attach.data+'" target="_blank" style="color:#991b1b">'+(b.attach.name||'PDF')+'</a></div>'; else html+='<img src="'+b.attach.data+'" style="width:100%;max-width:260px;border-radius:8px;margin-top:8px">'; }
-  else if(_attachMeta[b.id]){ html+='<div class="filechip">'+(_hydrating[b.id]?'&#9203; กำลังโหลดไฟล์แนบ…':('&#128206; <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="loadAttach(\''+b.id+'\',event)">แตะดูไฟล์แนบ</button>'))+'</div>'; }
+  else if(_attachMeta[b.id]){
+    // v2.9: มีรูปย่อก็โชว์ไปก่อน (เบลอนิดหน่อย) แล้วให้กดโหลดรูปเต็มถ้าอยากดูชัด
+    if(_attachMeta[b.id].thumb) html+='<div><img src="'+_attachMeta[b.id].thumb+'" style="width:100%;max-width:180px;border-radius:8px;margin-top:8px"></div>';
+    html+='<div class="filechip">'+(_hydrating[b.id]?'&#9203; กำลังโหลดไฟล์แนบ…':('&#128206; <button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="loadAttach(\''+b.id+'\',event)">'+(_attachMeta[b.id].thumb?'ดูรูปเต็ม':'แตะดูไฟล์แนบ')+'</button>'))+'</div>'; }
   document.getElementById('detailInfo').innerHTML=html;
   setTimeout(function(){
     if(!_dmap){ _dmap=L.map('detailMap'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'(c) OpenStreetMap'}).addTo(_dmap); }
