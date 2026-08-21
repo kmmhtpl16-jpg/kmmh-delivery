@@ -741,7 +741,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.17</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.18</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1096,7 +1096,7 @@ async function sendQueueBacklog(){
 
 // แจ้งเตือน 16:00 — บิลที่รออนุมัติ
 function sendPendingAlert(){
-  var today = new Date().toISOString().slice(0,10);
+  var today = todayISO();
   var pending = records.filter(function(r){
     return r.date===today && r.status==='pending';
   });
@@ -1114,7 +1114,7 @@ function sendPendingAlert(){
 
 // สรุปยอด 17:00
 function sendDailySummary(){
-  var today = new Date().toISOString().slice(0,10);
+  var today = todayISO();
   var todayRecs = records.filter(function(r){
     return r.date===today && r.status==='active';
   });
@@ -1524,6 +1524,18 @@ async function deleteFromCloud(id){
 }
 
 // Convert record → DB row
+/* 📅 วันที่แบบ "เวลาบ้านเรา" (แก้ 21ส.ค.69 v1.18)
+   เดิมใช้ new Date().toISOString().slice(0,10) = วันที่ตามเวลา UTC ซึ่งช้ากว่าไทย 7 ชม.
+   → บิล/รายการเติมน้ำมันที่บันทึกก่อน 07:00 น. จะถูกเก็บเป็น "เมื่อวาน" ทั้งที่คนกรอกเห็นวันนี้
+     และตัวกรอง "วันนี้" (สรุปวัน/เตือนอนุมัติ/การ์ดหน้าแรก) ก็เพี้ยนตามในช่วงเวลาเดียวกัน
+   isoDate() อ่านจากปฏิทินของเครื่อง (getFullYear/getMonth/getDate) จึงตรงกับที่คนเห็นเสมอ */
+function isoDate(d){
+  var x = (d instanceof Date) ? d : new Date();
+  if(isNaN(x.getTime())) x = new Date();
+  return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+}
+function todayISO(){ return isoDate(new Date()); }
+
 function recToDb(r){
   return {
     id: r.id, date: r.date, bill: r.bill, car: r.car,
@@ -1544,7 +1556,11 @@ function recToDb(r){
     photos_after: (r.photosAfter||[]).map(function(p){ return (p&&p.startsWith('http'))?p:null; }).filter(Boolean),
     status: r.status||'pending',
     approved_by: r.approvedBy||null,
-    approved_at: r.approvedAt||null
+    approved_at: r.approvedAt||null,
+    /* v1.18: ส่งไปด้วย เผื่อบิลที่ยกเลิกตอนเน็ตหลุดแล้วค่อยขึ้นคลาวด์ทีหลัง (INSERT ครั้งแรก)
+       ตอน UPDATE ทับ ไม่มีผล — RPC upsert_delivery ไม่มี 2 คอลัมน์นี้ใน SET list = ของใน DB ไม่ถูกแตะ */
+    cancelled_by: r.cancelledBy||null,
+    cancelled_at: r.cancelledAt||null
   };
 }
 
@@ -1601,7 +1617,13 @@ function dbToRec(row){
     status: row.status||'pending',
     approvedBy: row.approved_by||null,
     approvedAt: row.approved_at||null,
-    overpayNote: row.overpay_note||''
+    overpayNote: row.overpay_note||'',
+    /* v1.18: 4 บรรทัดนี้เคยตกหล่น → refreshFromCloud เอาข้อมูลคลาวด์มาทับ records ทุกครั้ง
+       ป้าย "👑 เจ้าของยกเลิก" กับ "✏️ แก้ไขแล้ว" เลยหายทันทีที่รีเฟรช ทั้งที่ DB มีค่าอยู่ */
+    cancelledBy: row.cancelled_by||'',
+    cancelledAt: row.cancelled_at||'',
+    lastEditedBy: row.last_edited_by||'',
+    lastEditedAt: row.last_edited_at||''
   };
 }
 
@@ -1701,7 +1723,7 @@ function setTodayDisplay(){
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const yyyy = d.getFullYear()+543;
   document.getElementById('fDateDisplay').value = dd+'/'+mm+'/'+yyyy;
-  document.getElementById('fDate').value = d.toISOString().slice(0,10);
+  document.getElementById('fDate').value = isoDate(d);
 }
 
 function formatThaiDate(input){
@@ -1720,7 +1742,7 @@ function formatThaiDate(input){
 }
 
 function updateTodaySub(){
-  const today = new Date().toISOString().slice(0,10);
+  const today = todayISO();
   const t = records.filter(r=>r.date===today);
   const el = document.getElementById('todaySub');
   if(!t.length){ el.textContent='วันนี้ยังไม่มีบิล'; return; }
@@ -2267,11 +2289,19 @@ function rmPhotoBtn(btn){
 
 var camSVG = '<svg viewBox="0 0 24 24" style="width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>';
 
+/* 📷 กันเลือกรูปทีเดียวทะลุ 6 ใบ (แก้ 21ส.ค.69 v1.18)
+   เดิมเช็ก length>=6 แบบ sync ในลูป แต่ push อยู่ใน callback ของ compressImage ที่ทำงานทีหลัง
+   → เลือก 10 ใบพร้อมกัน ทุกใบผ่านด่านตอน length ยังเป็น 0 แล้วค่อยทยอย push = ได้ 10 รูป
+   แก้: ตัดจำนวนไฟล์ตามโควตาที่เหลือตั้งแต่ตอนเลือก (slots) + เช็กซ้ำอีกชั้นใน callback
+        (กันกรณีกดเพิ่มหลายรอบซ้อนกันก่อนรอบแรกบีบรูปเสร็จ) */
 function addPhotos(gridId, input){
   if(gridId==='photoBefore' && photosBefore.length>=6){ toast('err','รูปก่อนออกรถครบ 6 รูปแล้ว'); return; }
-  Array.from(input.files).forEach(function(f){
-    if(photosBefore.length>=6) return;
+  var files = Array.from(input.files);
+  var slots = 6 - photosBefore.length;
+  if(files.length > slots) toast('err','เพิ่มได้อีก '+slots+' รูป (สูงสุด 6) — ที่เกินมา '+(files.length-slots)+' รูปถูกข้าม');
+  files.slice(0, slots).forEach(function(f){
     compressImage(f, function(compressed){
+      if(photosBefore.length>=6) return;
       photosBefore.push(compressed);
       renderPhotoGrid('photoBefore', photosBefore, 'upBefore');
     });
@@ -2280,9 +2310,12 @@ function addPhotos(gridId, input){
 }
 function addPhotosStep2(input){
   if(photosAfterNew.length>=6){ toast('err','รูปหลังส่งของครบ 6 รูปแล้ว'); return; }
-  Array.from(input.files).forEach(function(f){
-    if(photosAfterNew.length>=6) return;
+  var files = Array.from(input.files);
+  var slots = 6 - photosAfterNew.length;
+  if(files.length > slots) toast('err','เพิ่มได้อีก '+slots+' รูป (สูงสุด 6) — ที่เกินมา '+(files.length-slots)+' รูปถูกข้าม');
+  files.slice(0, slots).forEach(function(f){
     compressImage(f, function(compressed){
+      if(photosAfterNew.length>=6) return;
       photosAfterNew.push(compressed);
       renderPhotoGrid('photoAfterStrip', photosAfterNew, 'upAfter2');
       document.getElementById('photoAfterCount').style.display='inline-flex';
@@ -3646,11 +3679,12 @@ async function confirmEdit(){
   var newBill = document.getElementById('editBill').value.trim().toUpperCase()||r.bill;
   var newDest = document.getElementById('editDest').value.trim();
   var newNote = document.getElementById('editNote').value.trim();
+  var editedAt = new Date().toISOString();   // v1.18: ใช้ค่าเดียวกันทั้งฝั่งคลาวด์และในเครื่อง
 
   /* v1.17: ส่งขึ้นระบบให้สำเร็จก่อน ค่อยแก้ในเครื่อง — ถ้าไม่สำเร็จโมดอลยังเปิดอยู่ กดบันทึกซ้ำได้เลย */
   if(db){
     try{
-      await dbRun(db.rpc('update_delivery',{rec_id:_editTarget,updates:{bill:newBill,dest:newDest,note:newNote,date:newDateISO}}),'แก้ไขบิล');
+      await dbRun(db.rpc('update_delivery',{rec_id:_editTarget,updates:{bill:newBill,dest:newDest,note:newNote,date:newDateISO,last_edited_by:currentRole,last_edited_at:editedAt}}),'แก้ไขบิล');
     }catch(e){
       console.warn('Edit cloud sync failed:', e);
       toast('err','❌ แก้ไขไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดบันทึกใหม่');
@@ -3663,7 +3697,7 @@ async function confirmEdit(){
   records[idx].note = newNote;
   records[idx].date = newDateISO;
   records[idx].lastEditedBy = currentRole;
-  records[idx].lastEditedAt = new Date().toISOString();
+  records[idx].lastEditedAt = editedAt;
   records[idx].lastEditReason = reason;
 
   // Save edit log
@@ -4061,7 +4095,7 @@ function clearFuelForm(){
   var dd=String(d.getDate()).padStart(2,'0');
   var mm=String(d.getMonth()+1).padStart(2,'0');
   document.getElementById('fuelDate').value=dd+'/'+mm+'/'+(d.getFullYear()+543);
-  document.getElementById('fuelDateISO').value=d.toISOString().slice(0,10);
+  document.getElementById('fuelDateISO').value=isoDate(d);
 }
 
 function fuelThaiDate(iso){
@@ -4597,12 +4631,12 @@ function exportCSV(){
   var rows=activeRecords.map(function(r){return [r.date,r.bill,r.car,r.driver,(r.helpers||[]).join('+'),r.dest||'',(r.tripTotal||0).toFixed(0),(r.driverTotal||0).toFixed(0),(r.helperTotal||0).toFixed(0),r.brickQty||0,(r.brickTotal||0).toFixed(2),r.crane?'ใช่':'',r.labor?'ใช่':'',r.timeOut||'',r.timeArrival||'',r.gpsOut||'',r.gpsArrival||'',(function(){var d=calcDistance(r.gpsOut,r.gpsArrival);return d>0?d.toFixed(1):'';})(),r.note||'',r.step2Done?'ส่งครบ':'รอส่งรูป'];});
   var csv=[h,...rows].map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
-  a.download='KMMH_'+new Date().toISOString().slice(0,10)+'.csv';a.click();toast('ok','ดาวน์โหลด CSV แล้ว');
+  a.download='KMMH_'+todayISO()+'.csv';a.click();toast('ok','ดาวน์โหลด CSV แล้ว');
 }
 function exportJSON(){
   var safe=records.map(function(r){return Object.assign({},r,{photosBefore:[],photosAfter:[]});});
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(safe,null,2)],{type:'application/json'}));
-  a.download='KMMH_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();toast('ok','Backup สำเร็จ (ไม่รวมรูป)');
+  a.download='KMMH_backup_'+todayISO()+'.json';a.click();toast('ok','Backup สำเร็จ (ไม่รวมรูป)');
 }
 function doImport(input){
   var file=input.files[0];if(!file)return;
