@@ -237,6 +237,23 @@ textarea{min-height:72px;resize:vertical}
       <label class="lbl">หมายเหตุ</label>
       <textarea id="editNote" style="min-height:60px;resize:none"></textarea>
     </div>
+    <div class="fg" id="editBonusBox" style="border-top:0.5px solid var(--line);padding-top:12px">
+      <label class="lbl">💰 ค่าเที่ยว / โบนัส</label>
+      <div class="chip-row">
+        <div class="chip" id="editChipBrick" onclick="editToggleBrick()">🧱 อิฐบล็อก (0.25฿/ก้อน)</div>
+      </div>
+      <div id="editBrickInput" style="display:none;margin-top:10px">
+        <input type="number" id="editBrickQty" min="0" placeholder="จำนวนก้อนอิฐ" oninput="editCalcBonus()">
+      </div>
+      <div id="editCraneLaborGroup" style="display:none;margin-top:10px">
+        <div style="font-size:11px;color:var(--t3);margin-bottom:6px">เฉพาะรถ 🚛 84-5763 เท่านั้น</div>
+        <div class="chip-row">
+          <div class="chip" id="editChipCrane" onclick="editToggleCrane()">🏗 ใช้เครน (+10฿/คน)</div>
+          <div class="chip" id="editChipLabor" onclick="editToggleLabor()">💪 ใช้แรงงาน (+5฿/คน)</div>
+        </div>
+      </div>
+      <div id="editBonusPreview" style="margin-top:10px;font-size:13px"></div>
+    </div>
     <div class="fg">
       <label class="lbl" style="color:var(--red)">* เหตุผลการแก้ไข (บังคับ)</label>
       <input type="text" id="editReason" placeholder="เช่น พิมพ์ผิด / แก้ชื่อลูกค้า">
@@ -741,7 +758,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.18</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.19</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -3623,6 +3640,74 @@ function closeSuccessModal(){
 // ==================== EDIT BILL ====================
 var _editTarget = null;
 
+/* 💰 แก้ อิฐ/เครน/ลงของ ของบิลที่บันทึกไปแล้ว (เพิ่ม 26ส.ค.69 v1.19)
+   🔑 ยอดเงินจริงคิดที่ RPC update_delivery_bonus ฝั่ง DB เท่านั้น
+   ตรงนี้คำนวณซ้ำแค่ "โชว์ให้ดูก่อนกดบันทึก" — ห้ามส่งยอดเงินขึ้นไปเอง */
+var _editBonusBase = null;
+function editToggleBrick(){
+  var c = document.getElementById('editChipBrick'); c.classList.toggle('on');
+  var on = c.classList.contains('on');
+  document.getElementById('editBrickInput').style.display = on ? 'block' : 'none';
+  if(!on) document.getElementById('editBrickQty').value = '';
+  editCalcBonus();
+}
+function editToggleCrane(){
+  var c = document.getElementById('editChipCrane'); c.classList.toggle('on');
+  if(c.classList.contains('on')) document.getElementById('editChipLabor').classList.remove('on');
+  editCalcBonus();
+}
+function editToggleLabor(){
+  var c = document.getElementById('editChipLabor'); c.classList.toggle('on');
+  if(c.classList.contains('on')) document.getElementById('editChipCrane').classList.remove('on');
+  editCalcBonus();
+}
+function editBonusValues(){
+  var b = _editBonusBase || {};
+  var on = document.getElementById('editChipBrick').classList.contains('on');
+  var qty = on ? (parseInt(document.getElementById('editBrickQty').value)||0) : 0;
+  if(qty < 0) qty = 0;
+  if(qty > 100000) qty = 100000;
+  if(qty === 0) on = false;
+  var is5763 = (b.car||'').indexOf('84-5763') >= 0;
+  var crane = is5763 && document.getElementById('editChipCrane').classList.contains('on');
+  var labor = is5763 && document.getElementById('editChipLabor').classList.contains('on');
+  if(crane) labor = false;
+  var nHelp = (b.helpers||[]).length, nAll = 1 + nHelp;
+  var isKlang = (b.deliveryType||'') === 'klang';
+  var isUPK = isKlang || b.deliveryType === 'upk' || b.deliveryType === 'receive'
+              || (b.dest||'').toUpperCase().indexOf('UPK') >= 0;
+  var brickTotal = isKlang ? 0 : qty*0.25;
+  var brickPP = (isKlang || nAll<=0) ? 0 : brickTotal/nAll;
+  var extraPP = isKlang ? 0 : ((crane?10:0)+(labor?5:0));
+  var f = b.incomplete ? 0.5 : 1;
+  var drv = ((isUPK?0:40)+brickPP+extraPP)*f;
+  var hlp = ((isUPK?0:20)+brickPP+extraPP)*f;
+  return {brickOn:on, brickQty:qty, brickTotal:brickTotal, brickPP:brickPP,
+          crane:crane, labor:labor, extraPP:extraPP,
+          driverTotal:drv, helperTotal:hlp, tripTotal:drv+(nHelp*hlp),
+          nHelp:nHelp, isKlang:isKlang};
+}
+function editBonusChanged(){
+  var b = _editBonusBase; if(!b) return false;
+  var v = editBonusValues();
+  return (!!b.brickOn !== v.brickOn) || ((+b.brickQty||0) !== v.brickQty)
+      || (!!b.crane !== v.crane) || (!!b.labor !== v.labor);
+}
+function editCalcBonus(){
+  var el = document.getElementById('editBonusPreview'); if(!el) return;
+  var b = _editBonusBase;
+  if(!b){ el.innerHTML = ''; return; }
+  var v = editBonusValues();
+  var h = '';
+  if(v.isKlang) h += '<div style="color:var(--blue)">🏭 งานส่งคลัง — ไม่คิดค่าเที่ยวและโบนัสใดๆ (฿0)</div>';
+  else if(v.brickOn && v.brickQty>0) h += '<div class="bonus-row"><span>🧱 อิฐ '+v.brickQty.toLocaleString()+' ก้อน×0.25฿</span><span>฿'+v.brickTotal.toFixed(2)+'</span></div>';
+  if(b.incomplete) h += '<div style="color:var(--red);font-size:12px">⚠️ บิลนี้'+((b.penaltyType==='wrong')?'ส่งผิด':'ส่งไม่ครบ')+' — ยอดถูกหักครึ่งแล้ว</div>';
+  h += '<div class="bonus-row"><span>🚗 '+(b.driver||'คนขับ')+'</span><span>฿'+v.driverTotal.toFixed(0)+' <span style="color:var(--t3)">(เดิม ฿'+(+b.driverTotal||0).toFixed(0)+')</span></span></div>';
+  if(v.nHelp > 0) h += '<div class="bonus-row"><span>👤 ผู้ช่วย (ต่อคน)</span><span>฿'+v.helperTotal.toFixed(0)+' <span style="color:var(--t3)">(เดิม ฿'+(+b.helperTotal||0).toFixed(0)+')</span></span></div>';
+  h += '<div class="bonus-row total"><span>รวมค่าเที่ยว</span><span>฿'+v.tripTotal.toFixed(0)+' <span style="color:var(--t3)">(เดิม ฿'+(+b.tripTotal||0).toFixed(0)+')</span></span></div>';
+  el.innerHTML = h;
+}
+
 function openEditModal(id){
   if(currentRole!=='admin' && currentRole!=='owner'){
     toast('err','⛔ ต้องเข้าสู่ระบบแอดมินก่อน'); return;
@@ -3644,6 +3729,17 @@ function openEditModal(id){
   }
   document.getElementById('editNote').value = r.note||'';
   document.getElementById('editReason').value = '';
+  // 💰 เติมค่าเดิมของ อิฐ/เครน/ลงของ (v1.19)
+  _editBonusBase = r;
+  var eb = document.getElementById('editChipBrick');
+  eb.classList.toggle('on', !!r.brickOn);
+  document.getElementById('editBrickInput').style.display = r.brickOn ? 'block' : 'none';
+  document.getElementById('editBrickQty').value = r.brickOn ? (r.brickQty||'') : '';
+  var isCar5763 = (r.car||'').indexOf('84-5763') >= 0;
+  document.getElementById('editCraneLaborGroup').style.display = isCar5763 ? 'block' : 'none';
+  document.getElementById('editChipCrane').classList.toggle('on', isCar5763 && !!r.crane);
+  document.getElementById('editChipLabor').classList.toggle('on', isCar5763 && !!r.labor);
+  editCalcBonus();
   document.getElementById('editModal').classList.add('show');
 }
 
@@ -3680,6 +3776,7 @@ async function confirmEdit(){
   var newDest = document.getElementById('editDest').value.trim();
   var newNote = document.getElementById('editNote').value.trim();
   var editedAt = new Date().toISOString();   // v1.18: ใช้ค่าเดียวกันทั้งฝั่งคลาวด์และในเครื่อง
+  var changes = [];                          // v1.19: ประกาศไว้บนสุด เพราะฝั่งโบนัสเติมรายการก่อน
 
   /* v1.17: ส่งขึ้นระบบให้สำเร็จก่อน ค่อยแก้ในเครื่อง — ถ้าไม่สำเร็จโมดอลยังเปิดอยู่ กดบันทึกซ้ำได้เลย */
   if(db){
@@ -3688,6 +3785,45 @@ async function confirmEdit(){
     }catch(e){
       console.warn('Edit cloud sync failed:', e);
       toast('err','❌ แก้ไขไม่สำเร็จ ยังไม่ขึ้นระบบ ('+((e&&e.message)||e)+') — เช็คเน็ตแล้วกดบันทึกใหม่');
+      return;
+    }
+  }
+
+  /* 💰 v1.19: ค่าเที่ยว/โบนัสเปลี่ยน -> ให้ DB คิดเงินใหม่แล้วรับค่ากลับมาใช้
+     (ไม่ส่งยอดเงินขึ้นไปเอง กันคนแก้ตัวเลขในหน้าเว็บแล้วยิงตรง) */
+  var _bonusMsg = '';
+  if(db && editBonusChanged()){
+    var bv = editBonusValues();
+    var bOld = {brickOn:!!r.brickOn, brickQty:+r.brickQty||0, crane:!!r.crane, labor:!!r.labor, tripTotal:+r.tripTotal||0};
+    try{
+      var bres = await dbRun(db.rpc('update_delivery_bonus',{
+        rec_id: _editTarget,
+        p_brick_on: bv.brickOn,
+        p_brick_qty: bv.brickQty,
+        p_crane: bv.crane,
+        p_labor: bv.labor,
+        p_edited_by: currentRole
+      }),'แก้ค่าเที่ยว/โบนัส');
+      var nb = bres && bres.data;
+      if(!nb) throw new Error('ระบบไม่ได้ส่งยอดใหม่กลับมา');
+      records[idx].brickOn     = nb.brickOn;
+      records[idx].brickQty    = nb.brickQty;
+      records[idx].brickTotal  = +nb.brickTotal;
+      records[idx].brickPP     = +nb.brickPP;
+      records[idx].crane       = nb.crane;
+      records[idx].labor       = nb.labor;
+      records[idx].extraPP     = +nb.extraPP;
+      records[idx].driverTotal = +nb.driverTotal;
+      records[idx].helperTotal = +nb.helperTotal;
+      records[idx].tripTotal   = +nb.tripTotal;
+      if(bOld.brickQty !== nb.brickQty || bOld.brickOn !== nb.brickOn) changes.push('อิฐ: '+(bOld.brickOn?bOld.brickQty+' ก้อน':'ไม่มี')+' → '+(nb.brickOn?nb.brickQty+' ก้อน':'ไม่มี'));
+      if(bOld.crane !== nb.crane) changes.push('เครน: '+(bOld.crane?'ใช่':'ไม่')+' → '+(nb.crane?'ใช่':'ไม่'));
+      if(bOld.labor !== nb.labor) changes.push('ลงของ: '+(bOld.labor?'ใช่':'ไม่')+' → '+(nb.labor?'ใช่':'ไม่'));
+      changes.push('ค่าเที่ยว: ฿'+bOld.tripTotal.toFixed(0)+' → ฿'+(+nb.tripTotal).toFixed(0));
+      _bonusMsg = ' (ค่าเที่ยว ฿'+(+nb.tripTotal).toFixed(0)+')';
+    }catch(e){
+      console.warn('Bonus edit failed:', e);
+      toast('err','❌ แก้ค่าเที่ยวไม่สำเร็จ ('+((e&&e.message)||e)+') — ข้อมูลเงินยังเป็นค่าเดิม กดบันทึกใหม่ได้');
       return;
     }
   }
@@ -3702,7 +3838,6 @@ async function confirmEdit(){
 
   // Save edit log
   var logs = JSON.parse(localStorage.getItem('kmmh_restore_logs')||'[]');
-  var changes = [];
   if(newBill !== oldBill) changes.push('เลขบิล: '+oldBill+' → '+newBill);
   if(newDest !== oldDest) changes.push('ปลายทาง: "'+oldDest+'" → "'+newDest+'"');
   if(newDateISO !== oldDate) changes.push('วันที่: '+oldDate+' → '+newDateISO);
@@ -3724,7 +3859,7 @@ async function confirmEdit(){
   closeEditModal();
   renderHistory();
   renderAdmin();
-  toast('ok','✓ แก้ไขบิล '+newBill+' สำเร็จ');
+  toast('ok','✓ แก้ไขบิล '+newBill+' สำเร็จ'+_bonusMsg);
 }
 
 // ==================== ส่งไม่ครบ — หักค่าเที่ยว 50% (ใช้ร่วม Step2 + หน้ารายละเอียด) ====================
