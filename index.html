@@ -758,7 +758,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.19</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.20</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -2451,6 +2451,16 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
   var drv = document.getElementById('fDriver').value;
   if(!date){ toast('err','กรุณากรอกวันที่บิล'); return; }
   var delivType = document.getElementById('fDeliveryType').value;
+  /* 🚨 v1.20: ไม่ได้กดเลือกประเภทงาน = ห้ามบันทึก
+     เดิมถ้าไม่กดเลย ค่าจะเป็น '' แล้วไหลไปทางที่ผิดทั้งสองทาง:
+       (1) ด่าน "กรุณากรอกเลขที่บิล" ไม่ทำงาน (มันเช็กเฉพาะ ==='deliver')
+       (2) ระบบออกเลขบิล RCV ให้เอง แถมคิดค่าเที่ยวเต็ม 40/20 เพราะ '' ไม่เข้ากฎยกเว้น
+     เคสจริง: RCV541511 (28 ก.ค.69) ขึ้น ฿40 ทั้งที่เป็นงานรับสินค้า */
+  if(!delivType){
+    toast('err','กรุณาเลือกประเภทงานก่อน (รับสินค้า / UPK / ส่งลูกค้า / ส่งคลัง)');
+    try{ document.getElementById('deliveryTypeSeg').scrollIntoView({behavior:'smooth',block:'center'}); }catch(e){}
+    return;
+  }
   if(!bill && delivType==='deliver'){ toast('err','กรุณากรอกเลขที่บิล'); return; }
   if(!bill){
     // Auto-generate for receive/upk
