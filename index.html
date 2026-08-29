@@ -758,7 +758,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.20</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.21</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -2014,7 +2014,9 @@ function toggleBrick(){
   document.getElementById('chipBrick').classList.toggle('on');
   const on = document.getElementById('chipBrick').classList.contains('on');
   document.getElementById('brickInput').style.display = on?'block':'none';
-  if(!on) document.getElementById('fBrickQty').value='';
+  /* v1.21: ปิดชิปแล้ว "ไม่ล้างตัวเลขทิ้ง" (ของเดิมล้างทันที = พิมพ์ไว้แล้วกดพลาดทีเดียวหายเลย)
+     ตอนคิดเงินยังยึดชิปเป็นหลักอยู่ ปิดชิป = ไม่คิดค่าอิฐเหมือนเดิม
+     แต่ถ้ามีตัวเลขค้างแล้วลืมติ๊ก saveStep1 จะถามก่อนบันทึก */
   calcAll(); saveDraft();
 }
 function toggleCrane(){
@@ -2462,6 +2464,18 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
     return;
   }
   if(!bill && delivType==='deliver'){ toast('err','กรุณากรอกเลขที่บิล'); return; }
+  /* 🧱 v1.21: กรอกจำนวนก้อนไว้แต่ลืมติ๊กชิปอิฐ = ถามก่อน ห้ามปล่อยเงียบ
+     (เคส KM6908-1102 26 ส.ค.69 อิฐ 400 ก้อน = ฿100 หายไปทั้งก้อนโดยไม่มีอะไรเตือน) */
+  var _bq = parseInt(document.getElementById('fBrickQty').value)||0;
+  if(_bq > 0 && !document.getElementById('chipBrick').classList.contains('on')){
+    var _msg = (delivType==='klang')
+      ? ('บันทึกจำนวนอิฐไว้ '+_bq.toLocaleString()+' ก้อน (งานส่งคลังไม่คิดเงิน)')
+      : ('คิดค่าอิฐให้ +฿'+(_bq*0.25).toFixed(2));
+    if(!confirm('⚠️ กรอกจำนวนอิฐไว้ '+_bq.toLocaleString()+' ก้อน แต่ยังไม่ได้ติ๊ก 🧱 อิฐบล็อก\n\nกด ตกลง = '+_msg+'\nกด ยกเลิก = กลับไปแก้เอง')) return;
+    document.getElementById('chipBrick').classList.add('on');
+    document.getElementById('brickInput').style.display='block';
+    calcAll();
+  }
   if(!bill){
     // Auto-generate for receive/upk
     var prefix = delivType==='upk' ? 'UPK' : 'RCV';
@@ -2660,6 +2674,7 @@ function clearForm(){
   helpers.clear();
   ['chipBrick','chipCrane','chipLabor'].forEach(function(id){ document.getElementById(id).classList.remove('on'); });
   document.getElementById('brickInput').style.display='none';
+  document.getElementById('fBrickQty').value='';   // v1.21: ต้องล้างด้วย ไม่งั้นเลขก้อนของบิลก่อนค้างมาถามบิลถัดไป
   document.getElementById('bonusCard').style.display='none';
   photosBefore=[];
   renderPhotoGrid('photoBefore',photosBefore,'upBefore');
