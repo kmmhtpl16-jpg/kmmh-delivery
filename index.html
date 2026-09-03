@@ -544,6 +544,10 @@ textarea{min-height:72px;resize:vertical}
       <div class="ph-sub" id="histSub">—</div>
     </div>
   </div>
+  <div style="position:relative;margin:0 0 10px">
+    <input type="search" id="histSearch" oninput="setHQ(this.value)" placeholder="🔍 ค้นหา เลขบิล หรือ ชื่อลูกค้า" autocomplete="off" style="width:100%;padding:11px 36px 11px 12px;font-size:14px;border-radius:10px;border:0.5px solid var(--border2);background:var(--card);color:var(--text);box-sizing:border-box">
+    <span id="histSearchClear" onclick="setHQ('')" style="display:none;position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--t2);font-size:15px;font-weight:700">✕</span>
+  </div>
   <div class="filter-scroll" id="monthFilter"></div>
   <div class="stat-row">
     <div class="stat" style="--sc:#1558a0"><div class="stat-l">บิลทั้งหมด</div><div class="stat-v" id="hsBills">0<small>บิล</small></div></div>
@@ -758,7 +762,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.21</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.22</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1327,6 +1331,7 @@ const DRAFT_KEY = 'kmmh_draft_v4';
 let records = [], delTarget = null;
 let photosBefore = [], photosAfterNew = [];
 let helpers = new Set(), histFilter = '';
+var histQuery = '';   /* v1.22: คำค้นหาในหน้าประวัติการส่ง (เลขบิล / ชื่อลูกค้า) */
 // --- History pagination (โหลดทีละ 10 บิล) ---
 var HIST_PAGE = 10;            // จำนวนเริ่มต้น = 10 รายการ (1 บิล = 1 รายการ)
 var histShown = HIST_PAGE;     // ตอนนี้แสดงกี่บิล
@@ -1655,7 +1660,7 @@ function showPage(p){
   document.getElementById('bnav-'+p).classList.add('active');
   flushPendingFresh();   // ออกจากฟอร์ม/สลับหน้าแล้ว ถ้ามีข้อมูลใหม่ค้างไว้ apply ก่อนวาด
   if(p==='pending') renderPending();
-  if(p==='history'){ histShown=HIST_PAGE; renderHistory(); }
+  if(p==='history'){ histShown=HIST_PAGE; histQuery=''; var _hs=document.getElementById('histSearch'); if(_hs) _hs.value=''; renderHistory(); }
   if(p==='report'){ populateMonths(); renderReport(); }
   if(p==='fuel') renderFuelPage();
   if(p==='admin'){
@@ -3376,6 +3381,20 @@ function saveStep2(){
 }
 
 // ==================== HISTORY ====================
+/* ── 🔍 ค้นหาบิลในหน้าประวัติ (v1.22 · 3 ก.ย.69) ────────────────────
+   ตัดช่องว่าง/ตัวพิมพ์เล็ก-ใหญ่ทิ้ง และตัด - ออกจากเลขบิล → พิมพ์ "0140" ก็เจอ KM6909-0140 */
+function histNorm(s){ return String(s==null?'':s).toLowerCase().replace(/\s+/g,''); }
+function histKey(s){ return histNorm(s).replace(/-/g,''); }
+function histMatch(r,q){
+  if(!q) return true;
+  var qq=q.replace(/-/g,'');
+  return histKey(r.bill).indexOf(qq)>=0 || histNorm(r.dest).indexOf(q)>=0;
+}
+function setHQ(v){
+  histQuery=String(v==null?'':v);
+  var el=document.getElementById('histSearch'); if(el && el.value!==histQuery) el.value=histQuery;
+  histShown=HIST_PAGE; renderHistory();
+}
 function renderHistory(){
   var months = [...new Set(records.map(function(r){return r.date.slice(0,7);}))].sort().reverse();
   var moN = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
@@ -3385,18 +3404,21 @@ function renderHistory(){
     filterHtml += '<div class="f-chip '+(histFilter===m?'on':'')+'" onclick="setHF(\''+m+'\')">'+moN[mo]+' '+thY+'</div>';
   });
   document.getElementById('monthFilter').innerHTML=filterHtml;
+  var _q=histNorm(histQuery);
   var f = records.filter(function(r){
     if(r.status==='cancelled') return false;
+    if(_q) return histMatch(r,_q);            /* กำลังค้นหา = ค้นทุกเดือน ไม่ติดเดือนที่เลือกไว้ */
     return !histFilter||r.date.startsWith(histFilter);
   }).sort(function(a,b){return b.date.localeCompare(a.date)||b.id-a.id;});
+  var _sc=document.getElementById('histSearchClear'); if(_sc) _sc.style.display=_q?'block':'none';
   // Count pending for badge
   var pendingApprove = f.filter(function(r){return r.status==='pending';}).length;
   document.getElementById('hsBills').innerHTML=f.length+'<small>บิล</small>';
   document.getElementById('hsTrip').textContent='฿'+Math.round(f.reduce(function(s,r){return s+(r.tripTotal||0);},0)).toLocaleString();
-  document.getElementById('histSub').textContent=histFilter?'เดือนที่เลือก':'ข้อมูลทั้งหมด';
+  document.getElementById('histSub').textContent=_q?('ผลค้นหา "'+histQuery.trim()+'" · ทุกเดือน · เจอ '+f.length+' บิล'):(histFilter?'เดือนที่เลือก':'ข้อมูลทั้งหมด');
   var list=document.getElementById('histList');
   if(!f.length){
-    list.innerHTML='<div class="empty"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><p>ยังไม่มีข้อมูล</p></div>';
+    list.innerHTML='<div class="empty"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><p>'+(_q?('ไม่พบบิลที่ตรงกับ "'+String(histQuery).trim().replace(/[&<>"]/g,' ')+'"'):'ยังไม่มีข้อมูล')+'</p></div>';
     return;
   }
   // แสดงทีละหน้า: เอาแค่ histShown บิลแรก (ที่เหลือกด "โหลดเพิ่ม")
@@ -3444,7 +3466,7 @@ function renderHistory(){
 // โหลดเพิ่ม: ขยายจำนวนที่แสดงแล้ว render ใหม่
 function showMoreHist(){ histShown += histStep(); renderHistory(); }
 // เปลี่ยนเดือน/ฟิลเตอร์ → กลับไปเริ่มที่ 10 บิลแรกเสมอ
-function setHF(m){ histFilter=m; histShown=HIST_PAGE; renderHistory(); }
+function setHF(m){ histFilter=m; histQuery=''; var _hs=document.getElementById('histSearch'); if(_hs) _hs.value=''; histShown=HIST_PAGE; renderHistory(); }
 
 // ==================== DETAIL (NO NESTED BACKTICKS - FIX #1) ====================
 // ➕ แอดมินเพิ่มรูปเข้าบิลย้อนหลัง (เคสรูปอัปไม่ครบ) — อัปเข้า storage ชื่อ before_/after_ ให้ trigger ลิงก์เข้าบิลอัตโนมัติ
