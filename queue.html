@@ -92,7 +92,7 @@
     <button onclick="location.href='index.html'" title="กลับแอปหลัก" style="flex:none;background:transparent;color:var(--t1);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer">←</button>
     <div style="flex:1;min-width:0">
       <h1>🚚 ระบบจองคิวส่งสินค้า</h1>
-      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v2.9 · 🔔 จองคิว</div>
+      <div class="sub">เชื่อมระบบจริง · ซิงค์ทุกเครื่อง · v3.0 · 🔔 จองคิว</div>
     </div>
     <button onclick="go('Book')" style="flex:none;background:#fff0eb;color:#c94f1e;border:1px solid #c94f1e;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">+ จองคิว</button>
   </div>
@@ -686,7 +686,32 @@ function autoRef(type){
   while(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===ref.toUpperCase();}));
   return ref;
 }
-function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; } var dup=state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===v && b.status!=='cancel';}); if(dup){ st.innerHTML='⚠️ เลขบิลนี้มีในระบบแล้ว'; st.style.color='var(--red)'; } else { st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; } }
+/* ── 🔁 ส่งสินค้ารอบ 2 (v3.0 · 3 ก.ย.69) ─────────────────────────────────
+   บิลใบเดิมที่ต้องแบ่งส่งหลายรอบ: จองซ้ำได้ แต่เลขที่บันทึกจะเติมท้าย -2, -3 ...
+   เพราะฝั่งแอปจัดส่ง deliveries.bill มี unique index — เลขซ้ำเป๊ะๆ กดออกส่งจริงจะเซฟไม่ผ่าน */
+function billBase(v){ return (v||'').trim().toUpperCase().replace(/-(?:[2-9]|[1-9][0-9])$/,''); }
+function billRound(v){ var m=(v||'').trim().toUpperCase().match(/-([2-9]|[1-9][0-9])$/); return m?parseInt(m[1],10):1; }
+var ST_TH={booked:'รอจัดส่ง',delivering:'กำลังส่ง',done:'ส่งสำเร็จ',postponed:'เลื่อนส่ง',onhold:'ยังไม่มีกำหนดส่ง'};
+/* rows = [{bill,status}] (ตัดที่ยกเลิกออกก่อน) → {base, found, maxRound, next, open} */
+function roundScan(bill, rows){
+  var base=billBase(bill), maxR=0, open=null, found=false;
+  (rows||[]).forEach(function(r){
+    var v=((r&&r.bill)||'').trim().toUpperCase(); if(!v) return;
+    if(billBase(v)!==base) return;
+    found=true;
+    var n=billRound(v); if(n>maxR) maxR=n;
+    var s=r.status;
+    if(!open && (s==='booked'||s==='delivering'||s==='postponed'||s==='onhold')) open={bill:v,status:s};
+  });
+  if(maxR<1) maxR=1;
+  return {base:base, found:found, maxRound:maxR, next:maxR+1, open:open};
+}
+function checkDupBill(){ var el=document.getElementById('fBill'),st=document.getElementById('fBillStatus'); if(!st) return; var v=(el.value||'').trim().toUpperCase(); if(!v){ st.textContent=''; return; }
+  var _rows=state.bookings.filter(function(b){return b.status!=='cancel';}).map(function(b){return {bill:b.bill,status:b.status};});
+  var sc=roundScan(v,_rows);
+  if(!sc.found){ st.innerHTML='✓ เลขบิลนี้ยังว่าง'; st.style.color='var(--green)'; return; }
+  if(sc.open){ st.innerHTML='⚠️ บิลนี้ยังส่งไม่จบ ('+escHtml(ST_TH[sc.open.status]||sc.open.status)+' · '+escHtml(sc.open.bill)+') — ถ้าเป็นการส่งรอบ '+sc.next+' จริง ระบบจะถามยืนยันตอนกดบันทึก'; st.style.color='var(--red)'; return; }
+  st.innerHTML='🔁 บิลนี้ส่งจบแล้ว — กดบันทึกจะเป็น <b>รอบ '+sc.next+'</b> เลขที่ '+escHtml(sc.base+'-'+sc.next); st.style.color='var(--orange)'; }
 function onHoldToggle(){
   var oh=document.getElementById('fOnHold'), dv=document.getElementById('fDeliveryDate'), lb=document.getElementById('fDeliveryDateLabel');
   if(!dv) return;
@@ -708,27 +733,38 @@ async function saveBooking(){
   else if(_delivDate > _today){ _st='postponed'; _newDate=_delivDate; }
   else { _st='booked'; }
   if(!requireCloud()) return;   // ห้ามสร้างจองใหม่ตอนที่ยังส่งขึ้นระบบไม่ได้ (จะดูเหมือนจองแล้วแต่จริงๆ ไม่เข้า)
+  var _round=1;
   if(bill){
-    if(state.bookings.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';})){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว'); return; }
+    var _rows=state.bookings.filter(function(b){return b.status!=='cancel';}).map(function(b){return {bill:b.bill,status:b.status};});
     // 📉 17ส.ค.69: เดิม select('data') = ดาวน์โหลดบิลทั้ง 237 ใบพร้อมรูปแนบ ~23MB
     // ทุกครั้งที่กดบันทึก แค่เพื่อเช็กเลขบิลซ้ำ (วันละ ~4 ครั้ง = 92MB/วัน = 2.8GB/เดือน)
     // ใหม่: ดึงแค่ (เลขบิล, สถานะ) ~10KB — ตรรกะเทียบเหมือนเดิมเป๊ะ
     if(db){ try{
-      var _rows=null;
       var _ck=await db.from('bookings').select('status,bill:data->>bill').neq('status','cancel');
       if(!_ck.error && _ck.data){ _rows=_ck.data; }
       else { var _f=await db.from('bookings').select('data,status');   // สำรอง
              _rows=(_f.data||[]).map(function(x){ return {status:x.status, bill:(x.data&&x.data.bill)||null}; }); }
-      var _dup=_rows.some(function(b){return (b.bill||'').trim().toUpperCase()===bill && b.status!=='cancel';});
-      if(_dup){ alert('⚠️ เลขบิลนี้มีในระบบแล้ว (เช็กจากทุกเครื่อง)'); return; }
     }catch(e){} }
+    /* เลขที่เคยออกรถไปแล้วในแอปจัดส่ง = ถือว่าใช้ไปแล้ว (deliveries.bill ห้ามซ้ำ) */
+    if(db){ try{
+      var _dv=await db.from('deliveries').select('bill').ilike('bill', billBase(bill)+'%');
+      if(!_dv.error && _dv.data) _dv.data.forEach(function(x){ if(x&&x.bill) _rows.push({bill:x.bill,status:'done'}); });
+    }catch(e){} }
+    var _sc=roundScan(bill,_rows);
+    if(_sc.found){
+      var _newBill=_sc.base+'-'+_sc.next, _msg;
+      if(_sc.open) _msg='⚠️ บิล '+_sc.base+' ยังส่งไม่จบ\nสถานะตอนนี้: '+(ST_TH[_sc.open.status]||_sc.open.status)+' (เลขที่ '+_sc.open.bill+')\n\nถ้าเผลอกรอกซ้ำ — กด ยกเลิก\nถ้าเป็นการส่งสินค้ารอบ '+_sc.next+' จริง — กด ตกลง แล้วจะบันทึกเป็นเลขที่ '+_newBill;
+      else _msg='🔁 บิล '+_sc.base+' ส่งจบแล้ว\n\nถ้าเป็นการส่งสินค้ารอบ '+_sc.next+' กด ตกลง\nระบบจะบันทึกเป็นเลขที่ '+_newBill+'\n(เลขบิลจริงยังเป็น '+_sc.base+' เหมือนเดิม แค่แยกรอบส่งไม่ให้ชนกัน)';
+      if(!confirm(_msg)) return;
+      bill=_newBill; _round=_sc.next;
+    }
   } else {
     bill=autoRef(type);
   }
   state.threshold=parseFloat(document.getElementById('fThreshold').value)||2;
   var _justBooked=null;
   state.bookings.unshift({
-    id:Date.now().toString(), bill:bill, type:type,
+    id:Date.now().toString(), bill:bill, type:type, round:_round, baseBill:(_round>1?billBase(bill):null),
     customer:document.getElementById('fCustomer').value.trim(),
     phone:document.getElementById('fPhone').value.trim(),
     note:document.getElementById('fNote').value.trim(),
@@ -743,7 +779,7 @@ async function saveBooking(){
   });
   _justBooked=state.bookings[0];
   var _savePromise=save();
-  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var _hd=(nb.status==='onhold')?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':((nb.status==='postponed')?('📅 <b>จองใหม่ · นัดส่งล่วงหน้า '+fmtDate(nb.newDate)+'</b> · '):'🟡 <b>จองใหม่ · ส่งวันนี้</b> · '); var m=_hd+nb.bill+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
+  (function(){ var nb=state.bookings[0]; if(nb){ var mapU='https://www.google.com/maps?q='+nb.lat+','+nb.lng; var _hd=(nb.status==='onhold')?'⏸️ <b>จองใหม่ · ยังไม่มีกำหนดส่ง</b> (หน้างานยังไม่พร้อมรับ) · ':((nb.status==='postponed')?('📅 <b>จองใหม่ · นัดส่งล่วงหน้า '+fmtDate(nb.newDate)+'</b> · '):'🟡 <b>จองใหม่ · ส่งวันนี้</b> · '); var m=_hd+nb.bill+(billRound(nb.bill)>1?(' · 🔁 ส่งรอบ '+billRound(nb.bill)):'')+(nb.type?('\n🏷️ '+jobTypeLabel(nb.type)):''); if(nb.customer) m+='\n\uD83C\uDFE2 '+nb.customer; if(nb.phone) m+='\n\u260E '+nb.phone; m+='\n\uD83D\uDCCD \u0e17\u0e34\u0e28'+dirOf(nb)+' \u00B7 <a href="'+mapU+'">\u0E40\u0E1B\u0e34\u0E14\u0E41\u0E1C\u0E19\u0e17\u0E35\u0E48</a>'; if(nb.note) m+='\n\uD83D\uDCDD '+nb.note; sendTelegram(m,QUEUE_CHAT); } })();
   ['fBill','fCustomer','fPhone','fNote','fDestLink'].forEach(function(i){document.getElementById(i).value='';});
   pendingDest=null;_pendingAttach=null;
   document.getElementById('fDestBtn').classList.remove('has');
@@ -969,6 +1005,7 @@ function card(b,showChk,together){
   h+='<div class="meta">📍 '+b.lat.toFixed(4)+', '+b.lng.toFixed(4)+'</div>';
   h+='<span class="dir">🧭 '+dirOf(b)+'</span>';
   var tags='<span class="badge '+badge[0]+'">'+badge[1]+'</span>';
+  var _rn=billRound(b.bill); if(_rn>1) tags+='<span class="badge" style="background:#fff0eb;color:var(--orange)">🔁 รอบ '+_rn+'</span>';
   if(together) tags+='<span class="tag-together">💡 ส่งด้วยกันได้</span>';
   if(b.tripId && b.status==='delivering') tags+='<span class="tag-trip">🧩 เที่ยวรวม</span>';
   h+='</div><div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">'+tags+'</div></div>';
