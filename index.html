@@ -768,11 +768,12 @@ textarea{min-height:72px;resize:vertical}
 
 <!-- ===== PAGE: ADMIN ===== -->
 <div class="page" id="page-admin"><div class="card" id="qbCfgCard" style="margin:12px;padding:14px;border:1px solid rgba(0,0,0,.09);border-top:3px solid #c94f1e;border-radius:14px;background:#fff"><h3 style="margin:0 0 8px;font-size:15px">🗺️ ตั้งค่าระบบจองคิว (จุดร้าน + ระยะเตือน)</h3><label style="display:block;font-size:13px;color:#6b6a63;margin:6px 0 4px">พิกัดร้าน — วางลิงก์ Google Maps หรือ 14.12,100.45</label><input type="text" id="cfgStore" placeholder="วางลิงก์ Google Maps หรือ lat,lng" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit"><label style="display:block;font-size:13px;color:#6b6a63;margin:10px 0 4px">ระยะเตือน ส่งห่างจากที่จอง (กม.)</label><input type="text" id="cfgThreshold" inputmode="decimal" placeholder="2" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit"><button onclick="saveQbConfig()" style="margin-top:10px;width:100%;padding:11px;border:none;border-radius:9px;background:#2d6411;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">💾 บันทึกตั้งค่าจองคิว</button><div id="cfgStatus" style="font-size:12.5px;margin-top:8px;color:#6b6a63"></div></div>
+<div class="card" id="gpsDevCard" style="margin:12px;padding:14px;border:1px solid rgba(0,0,0,.09);border-top:3px solid #1d4ed8;border-radius:14px;background:#fff"><h3 style="margin:0 0 8px;font-size:15px">📍 หมายเลขเครื่อง GPS (ตั้งครั้งเดียวต่อมือถือ)</h3><label style="display:block;font-size:13px;color:#6b6a63;margin:6px 0 4px">มือถือเครื่องนี้คือเครื่องหมายเลขอะไร — ต้องตรงกับ "หมายเลขอุปกรณ์" ในแอป Traccar Client</label><select id="gpsDevSel" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;background:#fff"><option value="">— ยังไม่ได้ตั้ง —</option><option value="1">เครื่อง 1</option><option value="2">เครื่อง 2</option><option value="3">เครื่อง 3</option></select><button onclick="saveDeviceId()" style="margin-top:10px;width:100%;padding:11px;border:none;border-radius:9px;background:#1d4ed8;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">💾 บันทึกหมายเลขเครื่อง</button><div id="gpsDevStatus" style="font-size:12.5px;margin-top:8px;color:#6b6a63"></div></div>
   <div class="ph">
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.24</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.25</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -1592,6 +1593,7 @@ function recToDb(r){
     driver: r.driver, helpers: r.helpers||[],
     dest: r.dest||'',
     phone: r.phone||'',
+    device_id: r.deviceId||'',
     delivery_type: r.deliveryType||'deliver',
     brick_on: r.brickOn||false, brick_qty: r.brickQty||0,
     brick_total: r.brickTotal||0, brick_pp: r.brickPP||0,
@@ -1654,6 +1656,7 @@ function dbToRec(row){
     driver: row.driver, helpers: row.helpers||[],
     dest: row.dest||'',
     phone: row.phone||'',
+    deviceId: row.device_id||'',
     deliveryType: row.delivery_type||'',
     brickOn: row.brick_on, brickQty: row.brick_qty,
     brickTotal: row.brick_total, brickPP: row.brick_pp,
@@ -1753,6 +1756,7 @@ async function startApp(){
   /* ลิงก์จากหน้าจองคิว index.html#history → เปิดหน้าประวัติให้เลย */
   try{ if(location.hash==='#history'){ history.replaceState(null,'',location.pathname); showPage('history'); } }catch(e){}
   checkDraftOnLoad();
+  try{ renderDeviceCard(); }catch(e){}
   scheduleDailySummary(); // Telegram daily summary at 17:00
   // Load fuel from cloud
   if(db) loadFuelFromCloud();
@@ -2559,6 +2563,7 @@ function saveStep1(){ var _gps=document.getElementById('fGpsOut'); if(_gps && !(
     driver:drv, helpers:hlpArr,
     dest:document.getElementById('fDest').value.trim(),
     phone:(document.getElementById('fPhone')?document.getElementById('fPhone').value.trim():''),
+    deviceId:getDeviceId(),
     deliveryType:delivTypeVal||'deliver',
     brickOn, brickQty, brickTotal, brickPP,
     crane, labor, extraPP,
@@ -3161,7 +3166,12 @@ function adminSwitchRole(){
 function parseCfgCoords(t){ if(!t) return null; var m=String(t).match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/); if(m){ var la=parseFloat(m[1]),ln=parseFloat(m[2]); if(la>=-90&&la<=90&&ln>=-180&&ln<=180) return {lat:la,lng:ln}; } return null; }
 async function loadQbConfig(){ if(!db) return; try{ var r=await db.from('qb_config').select('data').eq('id','main').maybeSingle(); var c=(r&&r.data&&r.data.data)?r.data.data:{}; var st=document.getElementById('cfgStore'),th=document.getElementById('cfgThreshold'),s=document.getElementById('cfgStatus'); if(th&&!th.value) th.value=(c.threshold!=null?c.threshold:2); if(st&&c.storeLat!=null&&!st.value) st.value=Number(c.storeLat).toFixed(6)+','+Number(c.storeLng).toFixed(6); if(s) s.innerHTML=(c.storeLat!=null?('จุดร้านปัจจุบัน: '+Number(c.storeLat).toFixed(5)+', '+Number(c.storeLng).toFixed(5)):'ยังไม่ได้ตั้งจุดร้าน'); }catch(e){ console.warn('cfg',e); } }
 async function saveQbConfig(){ if(!db){ alert('ยังไม่เชื่อมฐานข้อมูล'); return; } var stEl=document.getElementById('cfgStore'),thEl=document.getElementById('cfgThreshold'),s=document.getElementById('cfgStatus'); var thv=parseFloat(thEl.value); var data={threshold:(isNaN(thv)?2:thv)}; var stv=(stEl.value||'').trim(); if(stv){ var c=parseCfgCoords(stv); if(!c){ s.innerHTML='⚠️ อ่านพิกัดร้านไม่ได้ — วางลิงก์เต็ม หรือ lat,lng'; s.style.color='#991c1c'; return; } data.storeLat=c.lat; data.storeLng=c.lng; } s.innerHTML='⏳ กำลังบันทึก...'; s.style.color='#6b6a63'; try{ var r=await db.from('qb_config').upsert({id:'main',data:data,updated_at:new Date().toISOString()},{onConflict:'id'}); if(r&&r.error){ s.innerHTML='⚠️ บันทึกไม่สำเร็จ: '+r.error.message; s.style.color='#991c1c'; return; } s.innerHTML='✓ บันทึกแล้ว · ทุกเครื่องเห็นค่าใหม่เมื่อรีเฟรชหน้าจองคิว'; s.style.color='#2d6411'; }catch(e){ s.innerHTML='⚠️ ผิดพลาด: '+e; s.style.color='#991c1c'; } }
-function renderAdmin(){ try{ loadQbConfig(); }catch(e){}
+/* ===== หมายเลขเครื่อง GPS ของมือถือเครื่องนี้ (เก็บใน localStorage แยกต่อเครื่อง) ===== */
+var GPS_DEV_KEY='kmmh_gps_device_id';
+function getDeviceId(){ try{ var v=(localStorage.getItem(GPS_DEV_KEY)||'').trim(); return /^[0-9]{1,3}$/.test(v)?v:''; }catch(e){ return ''; } }
+function renderDeviceCard(){ var sel=document.getElementById('gpsDevSel'), s=document.getElementById('gpsDevStatus'); var v=getDeviceId(); if(sel) sel.value=v; if(!s) return; if(v){ s.innerHTML='\u2713 เครื่องนี้ = เครื่อง '+v+' \u00b7 บิลที่บันทึกจากเครื่องนี้จะผูกกับหมุดเครื่อง '+v+' บนแผนที่'; s.style.color='#2d6411'; } else { s.innerHTML='\u26a0\ufe0f ยังไม่ได้ตั้ง \u2014 บิลจากเครื่องนี้จะไม่รู้ว่าเป็นรถคันไหนบนแผนที่'; s.style.color='#8a4d00'; } }
+function saveDeviceId(){ var sel=document.getElementById('gpsDevSel'), s=document.getElementById('gpsDevStatus'); if(!sel) return; var v=(sel.value||'').trim(); try{ if(v) localStorage.setItem(GPS_DEV_KEY,v); else localStorage.removeItem(GPS_DEV_KEY); }catch(e){ if(s){ s.innerHTML='\u26a0\ufe0f บันทึกไม่ได้ (เบราว์เซอร์ปิดที่เก็บข้อมูลไว้)'; s.style.color='#991c1c'; } return; } renderDeviceCard(); toast('ok', v?('ตั้งเป็นเครื่อง '+v+' แล้ว'):'ล้างหมายเลขเครื่องแล้ว'); }
+function renderAdmin(){ try{ loadQbConfig(); }catch(e){} try{ renderDeviceCard(); }catch(e){}
   // Update role badge
   var badge = document.getElementById('adminRoleBadge');
   if(currentRole==='owner') badge.textContent='👑 เจ้าของ — เข้าถึงได้ทุกอย่าง';
