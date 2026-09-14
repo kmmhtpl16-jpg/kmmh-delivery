@@ -83,7 +83,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
 <body>
 <div class="app">
   <div class="top">
-    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.2</span>
+    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.3</span>
     <span class="spacer"></span>
     <span class="stat" id="stat">กำลังเชื่อมต่อ…</span>
     <button class="btn" id="btnFit">🎯 ดูทุกคัน</button>
@@ -162,7 +162,8 @@ function battCls(b){
   if(n<=40) return 'batt-m';
   return '';
 }
-// บิลเปิดค้างของเครื่องนี้ = status active + ยังไม่กดสเต็ป 2 (ถ้ามีหลายใบ เอาใบใหม่สุด)
+// บิลเปิดค้างของเครื่องนี้ = ยังไม่ถูกยกเลิก + ยังไม่กดสเต็ป 2 (ถ้ามีหลายใบ เอาใบใหม่สุด)
+// ⚠️ ห้ามกรอง status='active' — บิลที่กำลังส่งจริงเป็น 'pending' (รออนุมัติ) จะไม่เจอสักใบ
 function pickBill(bills,devId){
   if(!bills||!bills.length||!devId) return null;
   var best=null;
@@ -395,7 +396,7 @@ async function tick(){
     if(a.error) throw a.error;
     var b=await db.from('deliveries')
           .select('id,bill,car,driver,dest,time_out,device_id')
-          .eq('status','active').eq('step2_done',false).not('device_id','is',null);
+          .neq('status','cancelled').eq('step2_done',false).not('device_id','is',null);
     if(b.error) throw b.error;
     positions=(a.data||[]);
     bills=(b.data||[]).filter(function(x){ return String(x.device_id||'').trim()!==''; });
