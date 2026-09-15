@@ -83,7 +83,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
 <body>
 <div class="app">
   <div class="top">
-    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.3</span>
+    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.4</span>
     <span class="spacer"></span>
     <span class="stat" id="stat">กำลังเชื่อมต่อ…</span>
     <button class="btn" id="btnFit">🎯 ดูทุกคัน</button>
@@ -214,6 +214,34 @@ function thaiDayStartISO(now){
   var mid=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
   return new Date(mid-7*3600000).toISOString();
 }
+// กางหมุดที่ซ้อนกัน — คืน {id:{dx,dy}} หน่วยพิกเซล
+// จัดกลุ่มหมุดที่อยู่ใกล้กันเกิน minPx แล้ววางเป็นวงกลมรอบจุดแรกของกลุ่ม
+// เรียงตาม id ก่อนเสมอ ผลลัพธ์จึงคงที่ ไม่สลับตำแหน่งไปมาทุกครั้งที่รีเฟรช
+function spreadOffsets(pts,minPx,radiusPx){
+  var out={}, groups=[];
+  var sorted=pts.slice().sort(function(a,b){
+    var x=String(a.id), y=String(b.id); return x<y?-1:(x>y?1:0);
+  });
+  sorted.forEach(function(p){
+    var hit=null;
+    for(var i=0;i<groups.length;i++){
+      var c=groups[i][0];
+      var dx=p.x-c.x, dy=p.y-c.y;
+      if(Math.sqrt(dx*dx+dy*dy)<minPx){ hit=groups[i]; break; }
+    }
+    if(hit) hit.push(p); else groups.push([p]);
+  });
+  groups.forEach(function(g){
+    if(g.length<2){ out[g[0].id]={dx:0,dy:0}; return; }
+    var n=g.length;
+    var r=radiusPx+(n>4?(n-4)*8:0);   // กลุ่มใหญ่ขึ้น วงกว้างขึ้น ไม่งั้นยังทับ
+    g.forEach(function(p,i){
+      var ang=-Math.PI/2+2*Math.PI*i/n;
+      out[p.id]={dx:Math.round(Math.cos(ang)*r),dy:Math.round(Math.sin(ang)*r)};
+    });
+  });
+  return out;
+}
 // ==== PURE HELPERS END ====
 
 /* ---------- ล็อกอินเงียบ (แบบเดียวกับ index.html / queue.html) ---------- */
@@ -249,12 +277,16 @@ async function ensureSession(){
 
 /* ---------- แผนที่ ---------- */
 var map=null, markers={}, trailLine=null, trailDev=null;
+var spreadLines=[];
+var SPREAD_MIN_PX=48;    // ใกล้กันกว่านี้ถือว่าทับกัน (รถจอดที่ร้านห่างกัน 13–60 ม.)
+var SPREAD_R_PX=42;      // รัศมีวงที่กางออก — 2 คันจะห่างกัน 84 px อ่านป้ายออกทั้งคู่
 var devices=[], positions=[], bills=[], follow=null, firstFit=true, timer=null, lastOk=null;
 
 function initMap(){
   map=L.map('map',{zoomControl:true}).setView([17.3586,102.8194],13); // ตั้งต้นที่ร้าน
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   map.on('dragstart',function(){ follow=null; });
+  map.on('zoomend',applySpread);   // ซูมแล้วระยะพิกเซลเปลี่ยน ต้องคิดใหม่
 }
 function setStat(txt,cls){
   var el=document.getElementById('stat');
@@ -298,19 +330,45 @@ function renderMap(now){
       m=L.marker([p.lat,p.lon],{icon:icon}).addTo(map);
       markers[p.device_id]=m;
     }else{
-      m.setLatLng([p.lat,p.lon]); m.setIcon(icon);
+      m.setIcon(icon);
     }
+    // ⚠️ พิกัดจริงเก็บไว้ที่ __true เสมอ — ตำแหน่งที่วาดอาจถูกกางออกเพื่อไม่ให้ทับกัน
+    // ที่อื่น (จัดกรอบ / ตามรถ / เส้นทาง) ต้องใช้ __true ห้ามใช้ getLatLng()
+    m.__true=[p.lat,p.lon];
     m.bindPopup(popupHtml(name,p,bill,st));
     seen[p.device_id]=1; bounds.push([p.lat,p.lon]);
   });
   Object.keys(markers).forEach(function(k){
     if(!seen[k]){ map.removeLayer(markers[k]); delete markers[k]; }
   });
+  applySpread();
   if(firstFit && bounds.length){ fitAll(); firstFit=false; }
-  else if(follow && markers[follow]){ map.panTo(markers[follow].getLatLng()); }
+  else if(follow && markers[follow]){ map.panTo(markers[follow].__true); }
+}
+
+// กางหมุดที่ทับกัน แล้วลากเส้นบาง ๆ กลับไปที่จุดจริง
+function applySpread(){
+  if(!map) return;
+  spreadLines.forEach(function(l){ try{ map.removeLayer(l); }catch(e){} });
+  spreadLines=[];
+  var keys=Object.keys(markers).filter(function(k){ return markers[k].__true; });
+  if(!keys.length) return;
+  var pts=keys.map(function(k){
+    var pt=map.latLngToLayerPoint(L.latLng(markers[k].__true));
+    return {id:k,x:pt.x,y:pt.y};
+  });
+  var off=spreadOffsets(pts,SPREAD_MIN_PX,SPREAD_R_PX);
+  pts.forEach(function(p){
+    var m=markers[p.id], o=off[p.id]||{dx:0,dy:0};
+    if(!o.dx && !o.dy){ m.setLatLng(m.__true); return; }
+    var to=map.layerPointToLatLng(L.point(p.x+o.dx,p.y+o.dy));
+    m.setLatLng(to);
+    spreadLines.push(L.polyline([m.__true,to],
+      {color:'#94a3b8',weight:1.5,opacity:.9,dashArray:'3,3',interactive:false}).addTo(map));
+  });
 }
 function fitAll(){
-  var b=[]; Object.keys(markers).forEach(function(k){ b.push(markers[k].getLatLng()); });
+  var b=[]; Object.keys(markers).forEach(function(k){ b.push(markers[k].__true||markers[k].getLatLng()); });
   if(!b.length) return;
   if(b.length===1) map.setView(b[0],16);
   else map.fitBounds(L.latLngBounds(b).pad(0.25));
@@ -355,6 +413,7 @@ function renderList(now){
 }
 function goTo(dev){
   var m=markers[dev]; if(!m) return;
+  // เลื่อนไปจุดจริง ไม่ใช่ตำแหน่งที่กางออก
   follow=dev; map.setView(m.getLatLng(),16); m.openPopup(); renderList(new Date());
 }
 async function toggleTrail(dev){
