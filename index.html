@@ -457,9 +457,7 @@ textarea{min-height:72px;resize:vertical}
     <div class="fg">
       <label class="lbl">คนขับ * (40฿/บิล)</label>
       <div class="seg" id="driverSeg">
-        <button class="seg-btn" onclick="selDriver(this,'จ๋า')">จ๋า</button>
-        <button class="seg-btn" onclick="selDriver(this,'แซ้งค์')">แซ้งค์</button>
-        <button class="seg-btn" onclick="selDriver(this,'ต้อม')">ต้อม</button>
+
       </div>
       <input type="hidden" id="fDriver">
     </div>
@@ -467,12 +465,7 @@ textarea{min-height:72px;resize:vertical}
     <div class="fg">
       <label class="lbl">ผู้ช่วย (20฿/คน/บิล)</label>
       <div class="chip-row" id="helperChips">
-        <div class="chip" onclick="toggleHelper(this,'จ๋า')">จ๋า</div>
-        <div class="chip" onclick="toggleHelper(this,'แซ้งค์')">แซ้งค์</div>
-        <div class="chip" onclick="toggleHelper(this,'ต้อม')">ต้อม</div>
-        <div class="chip" onclick="toggleHelper(this,'พีพี')">พีพี</div>
-        <div class="chip" onclick="toggleHelper(this,'แป๋ง')">แป๋ง</div>
-        <div class="chip" onclick="toggleHelper(this,'ไนท์')">ไนท์</div>
+
       </div>
     </div>
   </div>
@@ -1750,6 +1743,8 @@ async function ensureSession(){
   return !err;
 }
 async function startApp(){
+  renderStaff();                 // 🆕 วาดปุ่มคนขับ/ผู้ช่วยจากสำเนาในเครื่องก่อน
+  loadStaffFromPayroll();        // แล้วอัปเดตจาก payroll เบื้องหลัง
   await load(); // load from Supabase (or localStorage fallback)
   setTodayDisplay();
   updateTodaySub();
@@ -1963,18 +1958,9 @@ function restoreDraft(){
       var clg = document.getElementById('craneLaborGroup');
       if(clg) clg.style.display = d.car.includes('84-5763') ? 'block' : 'none';
     }
-    if(d.driver){
-      document.getElementById('fDriver').value = d.driver;
-      const drvMap = {'จ๋า':0,'แซ้งค์':1,'ต้อม':2};
-      const idx = drvMap[d.driver];
-      if(idx!==undefined){ document.querySelectorAll('#driverSeg .seg-btn')[idx].classList.add('active'); }
-    }
-    if(d.helpers && d.helpers.length){
-      d.helpers.forEach(name=>{
-        helpers.add(name);
-        document.querySelectorAll('#helperChips .chip').forEach(c=>{ if(c.textContent.trim()===name){ c.dataset.name=name; c.classList.add('on'); } });
-      });
-    }
+    if(d.driver){ document.getElementById('fDriver').value = d.driver; }
+    if(d.helpers && d.helpers.length){ d.helpers.forEach(name=>{ helpers.add(name); }); }
+    renderStaff();   // 🆕 ไฮไลต์ตามชื่อ (คนที่ไม่อยู่ในรายชื่อแล้วจะขึ้นปุ่มเทา "ออกแล้ว")
     if(d.brickOn){
       document.getElementById('chipBrick').classList.add('on');
       document.getElementById('brickInput').style.display='block';
@@ -2035,6 +2021,47 @@ function switchToUPK(){
   });
   document.getElementById('upkWarn').style.display = 'none';
   toast('ok','เปลี่ยนเป็น UPK แล้ว');
+}
+
+// ==================== 👥 รายชื่อคนขับ/ผู้ช่วย จาก payroll (25 ก.ย. 69) ====================
+//   เดิมพิมพ์ฝังในโค้ด → คนใหม่ไม่ขึ้น / คนลาออกยังกดได้
+//   ตอนนี้: RPC delivery_staff_list() (คนขับ = ตำแหน่ง driver · ผู้ช่วย = front/driver ที่ไม่ใช่คลัง)
+//   เก็บสำเนาในเครื่อง (STAFF_KEY) ไว้เปิดแอปตอนเน็ตช้า · ชื่อในบิลเก่าที่ไม่อยู่ในรายชื่อแล้ว = โชว์ปุ่มเทา "(ออกแล้ว)" ไม่ให้หายเงียบ
+var STAFF_KEY = 'kmmh_delivery_staff_v1';
+var STAFF_FALLBACK = [
+  {nick:'จ๋า',driver:true,helper:true},{nick:'แซ้งค์',driver:true,helper:true},{nick:'ต้อม',driver:true,helper:true},
+  {nick:'แป๋ง',driver:false,helper:true},{nick:'ไนท์',driver:false,helper:true}
+];
+var STAFF = (function(){ try{ var c=JSON.parse(localStorage.getItem(STAFF_KEY)||'null'); if(Array.isArray(c)&&c.length) return c; }catch(e){} return STAFF_FALLBACK; })();
+function _escAttr(t){ return String(t).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function renderStaff(){
+  var drv = (document.getElementById('fDriver')||{}).value || '';
+  var dNames = STAFF.filter(function(x){return x.driver;}).map(function(x){return x.nick;});
+  var hNames = STAFF.filter(function(x){return x.helper;}).map(function(x){return x.nick;});
+  if(drv && dNames.indexOf(drv)<0) dNames.push(drv);                       // คนขับในบิล/ร่างที่ไม่อยู่ในรายชื่อแล้ว
+  helpers.forEach(function(h){ if(hNames.indexOf(h)<0) hNames.push(h); });  // ผู้ช่วยในบิล/ร่างที่ไม่อยู่ในรายชื่อแล้ว
+  var dActive = STAFF.filter(function(x){return x.driver;}).map(function(x){return x.nick;});
+  var hActive = STAFF.filter(function(x){return x.helper;}).map(function(x){return x.nick;});
+  var seg = document.getElementById('driverSeg');
+  if(seg) seg.innerHTML = dNames.map(function(n){
+    var gone = dActive.indexOf(n)<0;
+    return '<button class="seg-btn'+(n===drv?' active':'')+'" data-name="'+_escAttr(n)+'" onclick="selDriver(this,this.dataset.name)"'+(gone?' style="opacity:.55"':'')+'>'+_escAttr(n)+(gone?' (ออกแล้ว)':'')+'</button>';
+  }).join('');
+  var chips = document.getElementById('helperChips');
+  if(chips) chips.innerHTML = hNames.map(function(n){
+    var gone = hActive.indexOf(n)<0;
+    return '<div class="chip'+(helpers.has(n)?' on':'')+'" data-name="'+_escAttr(n)+'" onclick="toggleHelper(this,this.dataset.name)"'+(gone?' style="opacity:.55"':'')+'>'+_escAttr(n)+(gone?' (ออกแล้ว)':'')+'</div>';
+  }).join('');
+}
+async function loadStaffFromPayroll(){
+  if(!db) return;
+  try{
+    var r = await db.rpc('delivery_staff_list');
+    if(r.error || !Array.isArray(r.data) || !r.data.length) { if(r.error) console.warn('delivery_staff_list', r.error); return; }
+    STAFF = r.data.map(function(x){ return {nick:x.nick, code:x.code, driver:!!x.driver, helper:!!x.helper}; });
+    try{ localStorage.setItem(STAFF_KEY, JSON.stringify(STAFF)); }catch(e){}
+    renderStaff();
+  }catch(e){ console.warn('loadStaffFromPayroll', e); }
 }
 
 function selDriver(btn,val){
@@ -2721,6 +2748,7 @@ function clearForm(){
   document.querySelectorAll('#carSeg .seg-btn,#driverSeg .seg-btn').forEach(function(b){ b.classList.remove('active'); });
   document.querySelectorAll('#helperChips .chip').forEach(function(c){ c.classList.remove('on'); });
   helpers.clear();
+  try{ renderStaff(); }catch(e){}   // 🆕 ล้างปุ่ม "(ออกแล้ว)" ที่ค้างจากบิลก่อน
   ['chipBrick','chipCrane','chipLabor'].forEach(function(id){ document.getElementById(id).classList.remove('on'); });
   document.getElementById('brickInput').style.display='none';
   document.getElementById('fBrickQty').value='';   // v1.21: ต้องล้างด้วย ไม่งั้นเลขก้อนของบิลก่อนค้างมาถามบิลถัดไป
