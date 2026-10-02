@@ -1429,6 +1429,31 @@ function mergePendingPhotos(fresh){
   }catch(e){ console.warn('mergePendingPhotos',e); }
   return fresh;
 }
+/* 🔒 กัน "บันทึกถึงที่" ที่ยังส่งไม่ขึ้นคลาวด์ ถูกข้อมูลคลาวด์ทับหาย (แก้ 2 ต.ค.69 · เคส ส่งคลัง-0110-001)
+   เดิม: กดบันทึกถึงตอนเน็ตไม่ดี → step2 ส่งไม่ขึ้น → refreshFromCloud เอาแถวคลาวด์ (step2_done=false) มาทับ
+         กันไว้แค่รูป base64 → พอรูปอัปขึ้นได้ทีหลัง ก็ส่งแถว "ยังไม่ถึง" กลับขึ้นไปพร้อมรูป → บิลค้างรอบันทึกถึงทั้งที่มีรูปหลังส่งครบ
+   ใหม่: saveStep2 ติดธง _s2Pend ไว้ในเครื่อง (ไม่ขึ้น DB) → ตอนดึงข้อมูล ถ้าคลาวด์ยังไม่ถึง ให้คงค่าถึงที่ของเครื่องไว้แล้วส่งซ้ำ
+         ธงหายเองเมื่อบันทึกขึ้นคลาวด์สำเร็จ หรือคลาวด์เป็น "ถึงแล้ว"/ยกเลิก
+   ✅ ปลอดภัย: ทั้งระบบไม่มีที่ไหนเปลี่ยน step2_done จาก true กลับเป็น false → คลาวด์ false + เครื่องติดธง = ยังส่งไม่ขึ้นเท่านั้น */
+var S2_KEYS = ['step2Done','gpsArrival','timeArrival','note','incomplete','incompleteReason','penaltyType','tripTotal','driverTotal','helperTotal'];
+function mergePendingStep2(fresh){
+  try{
+    var byId={}; (records||[]).forEach(function(r){ if(r&&r.id!=null&&r._s2Pend) byId[r.id]=r; });
+    var resend=[];
+    (fresh||[]).forEach(function(fr){
+      var lr=byId[fr.id]; if(!lr) return;
+      if(fr.step2Done || fr.status==='cancelled') return;   // ขึ้นแล้ว / ถูกยกเลิก → เชื่อคลาวด์ ธงหายไปเอง
+      S2_KEYS.forEach(function(k){ fr[k]=lr[k]; });
+      fr._s2Pend = lr._s2Pend;
+      resend.push(fr);
+    });
+    if(resend.length){
+      console.warn('บันทึกถึงที่ยังไม่ขึ้นคลาวด์ '+resend.length+' ใบ — คงไว้ในเครื่องแล้วส่งซ้ำ');
+      if(db) resend.forEach(function(r){ try{ saveToCloud(r); }catch(e){} });
+    }
+  }catch(e){ console.warn('mergePendingStep2',e); }
+  return fresh;
+}
 /* 🔒 กันบิลที่ "ยังไม่ขึ้นคลาวด์" หายตอนดึงข้อมูลใหม่ (แก้ 20ส.ค.69 v1.16)
    เดิม refreshFromCloud เอาข้อมูลคลาวด์มาทับทั้ง records และ localStorage
    → บิลที่บันทึกตอนเน็ตหลุด (ตอนนั้นเด้ง "ข้อมูลอยู่ในเครื่อง" คนขับสบายใจ) หายเกลี้ยงเมื่อเปิดแอปใหม่ กู้ไม่ได้
@@ -1461,6 +1486,7 @@ async function refreshFromCloud(){
     if(res.data && Array.isArray(res.data)){
       var fresh = res.data.map(dbToRec);
       fresh = mergePendingPhotos(fresh); // 🔒 กันรูป base64 ที่ยังอัปไม่ขึ้นถูกเขียนทับด้วยข้อมูล cloud
+      fresh = mergePendingStep2(fresh);  // 🔒 กัน "บันทึกถึงที่" ที่ยังไม่ขึ้นคลาวด์ถูกทับ (2 ต.ค.69)
       fresh = mergeLocalOnly(fresh);     // 🔒 กันบิลที่ยังไม่ขึ้นคลาวด์หายไปกับการทับข้อมูล
       var freshJSON = JSON.stringify(fresh);
       localStorage.setItem(KEY, freshJSON);                 // เก็บลง cache เสมอ
@@ -1560,6 +1586,13 @@ async function _saveToCloudRun(rec){
       res = await _saveToCloudOnce(rec);
     }
     if(res.error && !res.error.message.includes('DataClone')) throw res.error;
+    // ขึ้นคลาวด์สำเร็จพร้อมสถานะถึงแล้ว → ปลดธง _s2Pend (ทั้งตัวที่ส่ง และตัวใน records ถ้าเป็นคนละก้อน)
+    if(rec && rec._s2Pend && rec.step2Done){
+      delete rec._s2Pend;
+      var _lr = (records||[]).find(function(x){ return x && x.id===rec.id; });
+      if(_lr && _lr._s2Pend){ delete _lr._s2Pend; }
+      try{ save(); }catch(e){}
+    }
   }catch(e){
     if(!e.message||!e.message.includes('DataClone')){
       console.warn('Cloud save failed:', e.message);
@@ -3538,6 +3571,7 @@ function saveStep2(){
   records[idx].timeArrival=now.toTimeString().slice(0,5);
   records[idx].note=note;
   records[idx].step2Done=true;
+  records[idx]._s2Pend=Date.now();   // 🔒 ธงในเครื่อง: ยังไม่ยืนยันว่าขึ้นคลาวด์ (ปลดเองเมื่อบันทึกสำเร็จ)
   var recIdx = idx;
   var recId = records[idx].id;
   // Upload after photos
