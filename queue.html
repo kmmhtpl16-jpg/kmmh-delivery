@@ -200,6 +200,7 @@
 <script>
 var KEY='qb_v1';
 var SB_URL='https://hfystbdqjhftrlelmkjm.supabase.co';
+var DELIV_AUTH_KEY = 'sb-kmmh-delivery-auth';   // r11: ช่องเก็บ session ของแอปส่งของเอง (ตั้งต้นสคริปต์ ก่อนสร้าง client ใด ๆ) — ทุกแอปร้านอยู่โดเมนเดียวกัน (kmmhtpl16-jpg.github.io) ห้ามแตะ key ของแอปอื่น
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmeXN0YmRxamhmdHJsZWxta2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTc3MDUsImV4cCI6MjA5NDczMzcwNX0.cyRCwh0G6ArSevhsKa6kmPnYhLRRJYrxhlH0ED_JJaE';
 var db=null;
 var state=load();
@@ -251,35 +252,172 @@ var _hydrating={};    // id -> true  = กำลังโหลดไฟล์�
 var _hydrateTried={}; // id -> true  = เคยลองโหลดอัตโนมัติแล้ว (กันวนซ้ำไม่รู้จบตอนเน็ตล่ม)
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||def(); }catch(e){ return def(); } }
 function def(){ return {bookings:[], store:null, threshold:2, favorites:[]}; }
-function initDB(){ try{ if(window.supabase){ db=supabase.createClient(SB_URL,SB_KEY); } }catch(e){ console.warn('init',e); } }
-// ล็อกอินเงียบอัตโนมัติ: ให้ RLS ทำงานเป็น authenticated (จองคิว/บันทึกลง bookings ได้) — พนักงานไม่ต้องพิมพ์รหัส
+/* client สำหรับเข้าระบบ (_sb) แยกจาก db: db จะถูกตั้งก็ต่อเมื่อยืนยันแล้วว่าเป็น session พนักงาน — ก่อนหน้านั้นไม่โหลด/ไม่ส่งข้อมูลใด ๆ */
+var _sb=null, _storageBroken=false;   // ล้าง session ในเครื่องไม่สำเร็จ → ล็อกจอ ไม่สร้าง client ใหม่
+var STORAGE_FAIL_MSG = 'ล้างข้อมูลในเครื่องไม่สำเร็จ กรุณาปิดแท็บแล้วเปิดใหม่';
+/* ล็อกทั้งหน้า (ใช้เมื่อล้าง session ในเครื่องไม่สำเร็จ — ไม่สร้าง client ใหม่ ไม่โหลด/ไม่ส่งข้อมูล) */
+function blockApp(msg){
+  try{
+    var b=document.getElementById('appBlock');
+    if(!b){ b=document.createElement('div'); b.id='appBlock'; b.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.8);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;font-size:18px;font-weight:700;line-height:1.5'; document.body.appendChild(b); }
+    b.textContent=msg;
+  }catch(e){}
+}
+/* เช็คว่า session ใน storage และป้ายโหมดเจ้าของถูกลบจริง (อ่าน storage ไม่ได้ = ถือว่าไม่สะอาด) */
+function storageClean(){
+  try{ return !Object.keys(localStorage).some(function(k){ return k===DELIV_AUTH_KEY || k==='kmmh_owner_sess' || k==='kmmh_emp_sess'; }); }catch(e){ return false; }
+}
+var _verifiedUid=null;   // uid พนักงานที่ยืนยันแล้วในการเปิดหน้านี้
+var TAB_SWITCH_MSG='บัญชีในเครื่องถูกเปลี่ยนจากแท็บอื่น กรุณาปิดแท็บแล้วเปิดใหม่';
+function lockTab(msg){ var c=_sb; _storageBroken=true; db=null; _sb=null; _verifiedUid=null; try{ if(c&&c.auth.stopAutoRefresh) c.auth.stopAutoRefresh(); }catch(e){} blockApp(msg); }
+/* แท็บอื่นเปลี่ยนบัญชีใน storage ที่ใช้ร่วมกัน (auth sync): uid ไม่ตรงกับพนักงานที่ยืนยันไว้ → ล็อกจอ · ออกจากระบบ → หยุดใช้ข้อมูลแล้วขอ PIN ใหม่ */
+/* กฎเดียวกันทั้ง 3 หน้า (index / queue / live): ทุก auth event (ยกเว้นต่ออายุ token บัญชีเดิม) → เพิ่มรุ่น + พักการใช้ข้อมูล (db=null)
+   กลับมาใช้ได้เฉพาะผ่าน verifyAndUse() ที่ผูกกับ client + uid + รุ่น · ออกจากระบบ → พัก + ขอ PIN · uid อื่นจากพนักงานที่เคยยืนยัน → ล็อก */
+var _authGen=0, _lastAuthUid=null, _lastGoodUid=null, _selfAuth=0;
+function watchAuth(c){ try{ c.auth.onAuthStateChange(function(ev,sess){
+  if(c!==_sb) return;
+  var uid=(sess&&sess.user&&sess.user.id)||null;
+  if(ev === 'INITIAL_SESSION') return;   // r12: INITIAL_SESSION = สถานะตอนเริ่ม client (ไม่ใช่การเปลี่ยน) — ผู้สร้าง client ยืนยันเองอยู่แล้ว · เดิมนับเป็นการเปลี่ยน → ensureSession ทิ้ง/สร้าง client วนไม่จบเมื่อยังไม่เข้าระบบ (เจอกับ supabase-js ตัวจริง)
+  if(ev==='TOKEN_REFRESHED' && uid===_lastAuthUid) return;   // ต่ออายุ token บัญชีเดิม ไม่นับ
+  _lastAuthUid=uid;
+  _authGen++;
+  if(_selfAuth>0) return;     // จอนี้เปลี่ยนเอง (ใส่ PIN/ออกจากระบบ) — ผู้เรียกยืนยันต่อเอง
+  db=null; _verifiedUid=null; // เปลี่ยนจากแท็บอื่น: หยุดใช้ข้อมูลทันที
+  if(uid && _lastGoodUid && uid!==_lastGoodUid){ lockTab(TAB_SWITCH_MSG); return; }
+  setTimeout(function(){ if(!_storageBroken) ensureSession(); },0);   // ออกจากระบบ → ขอ PIN · บัญชีเดิม → ยืนยันใหม่
+}); }catch(e){} }
+function authDb(){ if(_storageBroken) return null; if(!_sb && window.supabase){ try{ _sb=supabase.createClient(SB_URL,SB_KEY,{auth:{storageKey:DELIV_AUTH_KEY}}); watchAuth(_sb); }catch(e){ console.warn('init',e); } } return _sb; }
+function initDB(){ db=null; authDb(); }
+/* ทิ้ง client (ล้าง session ในหน่วยความจำ) + ล้าง session ใน storage + ป้ายโหมดเจ้าของ */
+function dropClient(){
+  try{ if(_sb && _sb.auth.stopAutoRefresh) _sb.auth.stopAutoRefresh(); }catch(e){}
+  db=null; _sb=null; _verifiedUid=null;
+  try{ Object.keys(localStorage).forEach(function(k){ if(k===DELIV_AUTH_KEY || k==='kmmh_owner_sess' || k==='kmmh_emp_sess') localStorage.removeItem(k); }); }catch(e){}
+  if(!storageClean()){ _storageBroken=true; blockApp(STORAGE_FAIL_MSG); }   // ลบไม่ออก → ไม่สร้าง client ใหม่ ล็อกจอแทน
+}
+// เข้าระบบ: มี session แล้วใช้ต่อ (จองคิว/บันทึกลง bookings ได้) · ยังไม่มี ให้ใส่ PIN ครั้งเดียว เครื่องจำไว้ให้
 var LOGIN_URL=SB_URL+'/functions/v1/login';
-var DELIV_PIN='2546';
-async function mintSession(pin){
+async function loginPin(pin){
   var sleep=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
   for(var attempt=0; attempt<3; attempt++){
     var res;
     try{ res=await fetch(LOGIN_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY},body:JSON.stringify({pin:pin})}); }
-    catch(e){ if(attempt<2){ await sleep(400); continue; } return 'network'; }
-    if(res.status===401){ return 'invalid_pin'; }
+    catch(e){ if(attempt<2){ await sleep(400); continue; } return {ok:false,error:'network'}; }
     var j=await res.json().catch(function(){return {};});
+    if(res.status===401) return {ok:false,error:'invalid_pin',attempts_left:j.attempts_left};
+    if(res.status===429) return {ok:false,error:'too_many_attempts',retry_after_minutes:j.retry_after_minutes};
     if(res.ok && j.access_token){
-      var r=await db.auth.setSession({access_token:j.access_token,refresh_token:j.refresh_token});
-      if(!r.error) return null;
-      if(attempt<2){ await sleep(400); continue; }
-      return 'session_error';
+      if(j.role!=='employee') return {ok:false,error:'staff_pin_only'};   // จอนี้รับเฉพาะ PIN พนักงาน (ไม่เก็บ session เจ้าของ/HR ไว้ในจอ)
+      var c=authDb(); if(!c) return {ok:false,error:'no_client'};
+      _verifiedUid=null;   // ติดตั้ง session ใหม่ของจอนี้เอง (ไม่ใช่แท็บอื่น)
+      _selfAuth++;
+      var r; try{ r=await c.auth.setSession({access_token:j.access_token,refresh_token:j.refresh_token}); }catch(e){ r={error:e}; }
+      _selfAuth--;
+      if(!r.error) return {ok:true,data:j};
+      return {ok:false,error:'session_error'};
     }
-    if(attempt<2){ await sleep(400); continue; }
-    return j.error||('error_'+res.status);
+    if(res.status>=500 && attempt<2){ await sleep(400); continue; }
+    return {ok:false,error:j.error||('error_'+res.status)};
   }
-  return 'error';
+  return {ok:false,error:'error'};
+}
+function pinErrText(r){
+  if(r.error==='invalid_pin') return '❌ PIN ไม่ถูกต้อง'+(r.attempts_left!=null?' (ลองได้อีก '+r.attempts_left+' ครั้ง)':'');
+  if(r.error==='too_many_attempts') return '⛔ ใส่ผิดหลายครั้งเกินไป ลองใหม่ใน '+(r.retry_after_minutes||15)+' นาที';
+  if(r.error==='network') return '📶 เชื่อมต่อไม่ได้ เช็คเน็ตแล้วลองใหม่';
+  if(r.error==='staff_pin_only') return '❌ จอนี้ใช้ PIN พนักงานเท่านั้น';
+  return '⚠️ เข้าระบบไม่สำเร็จ ('+r.error+')';
+}
+/* หน้าต่างใส่ PIN (ครั้งเดียวต่อเครื่อง — หลังจากนั้นเครื่องจำ session ไว้) */
+var _loginWait=null;
+function askLoginPin(){
+  if(_loginWait) return _loginWait;
+  _loginWait=new Promise(function(resolve){
+    var bg=document.createElement('div'); bg.id='loginPinBox';
+    bg.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:inherit';
+    bg.innerHTML='<form style="background:#fff;border-radius:14px;padding:20px;width:min(320px,90vw);text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.3)">'
+      +'<div style="font-size:30px">🔒</div><div style="font-weight:800;font-size:17px;margin:4px 0 6px">เข้าใช้งานจอนี้</div>'
+      +'<div style="font-size:13px;color:#555;margin-bottom:10px">ใส่ PIN 4–6 หลัก แล้วกด ตกลง (ใส่ครั้งเดียว เครื่องจำไว้ให้)</div>'
+      +'<input id="loginPinIn" type="password" inputmode="numeric" autocomplete="off" maxlength="6" style="width:100%;font-size:22px;text-align:center;letter-spacing:6px;padding:10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box">'
+      +'<div id="loginPinErr" style="color:#b91c1c;font-size:13px;min-height:18px;margin:8px 0"></div>'
+      +'<button type="submit" style="width:100%;padding:11px;border:0;border-radius:10px;background:#0f766e;color:#fff;font-weight:800;font-size:15px">ตกลง</button>'
+      +'<button type="button" id="loginPinCancel" style="width:100%;margin-top:8px;padding:9px;border:1px solid #ccc;border-radius:10px;background:#fff;font-size:14px">ยกเลิก</button>'
+      +'</form>';
+    document.body.appendChild(bg);
+    var inp=bg.querySelector('#loginPinIn'), err=bg.querySelector('#loginPinErr'), busy=false;
+    var done=function(ok){ if(bg.parentNode) bg.parentNode.removeChild(bg); resolve(ok); };
+    inp.addEventListener('input',function(){ inp.value=inp.value.replace(/[^0-9]/g,'').slice(0,6); err.textContent=''; });
+    bg.querySelector('#loginPinCancel').onclick=function(){ if(!busy) done(false); };
+    bg.querySelector('form').onsubmit=async function(e){
+      e.preventDefault();
+      if(busy) return;
+      var v=inp.value;
+      if(!/^[0-9]{4,6}$/.test(v)){ err.textContent='ใส่ PIN 4–6 หลัก'; return; }
+      busy=true; err.textContent='⏳ กำลังตรวจ...';
+      var r=await loginPin(v);
+      busy=false; inp.value=''; v='';
+      if(r.ok) done(true); else { err.textContent=pinErrText(r); inp.focus(); }
+    };
+    setTimeout(function(){ try{ inp.focus(); }catch(e){} },50);
+  }).then(function(ok){ _loginWait=null; return ok; });
+  return _loginWait;
+}
+/* role ของ session เดิม อ่านจาก public.users ของตัวเอง (แบบเดียวกับ revauth.currentRole) · err = เช็คไม่ได้ (เช่น เน็ตหลุด) */
+async function sessionRole(s,c){
+  try{
+    if(!s||!s.user||!s.user.id) return {role:null};
+    c=c||authDb(); if(!c) return {role:null,err:'no_client'};
+    var r=await c.from('users').select('role,is_active').eq('id',s.user.id).maybeSingle();
+    if(r&&r.error) return {role:null,err:r.error};
+    if(!r||!r.data||r.data.is_active===false) return {role:null};
+    return {role:String(r.data.role||'')};
+  }catch(e){ return {role:null,err:e}; }
+}
+/* ยืนยันแล้วค่อยใช้: จับ client / uid / รุ่น (_authGen) ไว้ก่อนเช็ค role แล้วอ่าน session ซ้ำหลังได้ผล
+   ต้องเป็น client เดิม (c===_sb) จอยังไม่ถูกล็อก รุ่นไม่เปลี่ยน และ uid เดิม จึงจะตั้ง db */
+async function verifyAndUse(c){
+  var gen=_authGen;
+  var s=await c.auth.getSession(); s=s&&s.data&&s.data.session;
+  if(!s||!s.user||!s.user.id) return {v:'none'};
+  var uid=s.user.id;
+  var who=await sessionRole(s,c);
+  if(_storageBroken || c!==_sb) return {v:'stale'};
+  if(who.role!=='employee') return {v:'notemp',err:who.err};
+  var s2=await c.auth.getSession(); s2=s2&&s2.data&&s2.data.session;
+  if(_storageBroken || c!==_sb) return {v:'stale'};
+  if(gen!==_authGen || !s2 || !s2.user || s2.user.id!==uid) return {v:'changed'};
+  _verifiedUid=uid; _lastGoodUid=uid; db=c;
+  return {v:'ok'};
 }
 async function ensureSession(){
-  if(!db) return false;
-  try{ var s=await db.auth.getSession(); if(s&&s.data&&s.data.session) return true; }catch(e){}
-  var err=await mintSession(DELIV_PIN);
-  if(err) console.warn('auto-login:',err);
-  return !err;
+  var c=authDb();
+  if(!c){ db=null; return false; }
+  if(db===c && _verifiedUid){
+    try{ var s0=await c.auth.getSession(); s0=s0&&s0.data&&s0.data.session; if(s0&&s0.user&&s0.user.id===_verifiedUid&&db===c&&c===_sb&&!_storageBroken) return true; }catch(e){}
+  }
+  db=null; _verifiedUid=null;   // ระหว่างเช็ค ห้ามใช้ข้อมูล
+  try{
+    var r=await verifyAndUse(c);
+    if(r.v==='ok') return true;
+    if(r.v==='stale') return false;                                    // จอถูกล็อก/เปลี่ยน client ระหว่างเช็ค → ไม่ใช้ผลนี้
+    if(r.v==='changed'){ lockTab(TAB_SWITCH_MSG); return false; }      // บัญชีเปลี่ยนระหว่างเช็ค → ล็อก
+    if(r.v==='notemp'){
+      if(r.err) console.warn('ensureSession: เช็ค role ไม่ได้ → ออกจากระบบเครื่องนี้แล้วขอ PIN ใหม่',r.err);
+      var so; _selfAuth++; try{ so=await c.auth.signOut({scope:'local'}); }catch(e){ so={error:e}; } _selfAuth--;   // จอนี้ใช้ได้เฉพาะ session พนักงาน · scope local = เครื่องอื่นไม่หลุด
+      if(so&&so.error) console.warn('signOut ไม่สำเร็จ → ทิ้ง client',so.error);
+    }
+  }catch(e){}
+  if(_storageBroken || c!==_sb) return false;
+  dropClient();   // ยังไม่ผ่าน = ไม่มี client/ session เหลือ และ db ว่าง (บล็อกการโหลดข้อมูลทั้งหมด)
+  if(_storageBroken) return false;   // ล้างไม่สำเร็จ → จอถูกล็อกแล้ว ไม่ขอ PIN
+  var ok=await askLoginPin();   // login สำเร็จได้เฉพาะ role employee (ดู loginPin)
+  if(!ok) return false;
+  var c2=_sb;
+  if(!c2 || _storageBroken) return false;
+  var r2; try{ r2=await verifyAndUse(c2); }catch(e){ r2={v:'error'}; }   // หลังใส่ PIN ก็ต้องยืนยันแบบเดียวกัน (ไม่รับ session อะไรก็ได้ที่อยู่ใน client)
+  if(r2.v==='ok') return true;
+  if(r2.v==='changed') lockTab(TAB_SWITCH_MSG);
+  return false;
 }
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
@@ -1112,7 +1250,11 @@ function resetAll(){
   initDB();
   renderQueue();
   setTimeout(function(){ if(_cloudPending){ _cloudPending=false; markCloudWarn(!_cloudLoaded); renderQueue(); } }, 4000);
-  (async function(){ await ensureSession(); loadCloud(); loadConfig(); })();
+  (async function(){
+    var ok=await ensureSession();
+    while(!ok){ if(!authDb()) return; ok=await ensureSession(); }   // ล็อกไว้: ยังไม่เข้าระบบ = ไม่โหลด/ไม่ส่งข้อมูล (ยกเลิก = ถาม PIN ใหม่)
+    loadCloud(); loadConfig();
+  })();
 })();
 </script>
 </body>
