@@ -208,8 +208,6 @@ textarea{min-height:72px;resize:vertical}
       <div id="pd1" style="width:14px;height:14px;border-radius:50%;background:var(--border2)"></div>
       <div id="pd2" style="width:14px;height:14px;border-radius:50%;background:var(--border2)"></div>
       <div id="pd3" style="width:14px;height:14px;border-radius:50%;background:var(--border2)"></div>
-      <div id="pd4" style="width:14px;height:14px;border-radius:50%;background:var(--border2)"></div>
-      <div id="pd5" style="width:14px;height:14px;border-radius:50%;background:var(--border2)"></div>
     </div>
     <div id="pinError" style="color:var(--red);font-size:13px;margin-bottom:10px;min-height:18px"></div>
     <!-- Numpad -->
@@ -227,8 +225,7 @@ textarea{min-height:72px;resize:vertical}
       <button class="pin-key" onclick="pinKey('0')">0</button>
       <button class="pin-key" onclick="pinDelete()" style="background:var(--card2);color:var(--t2)">⌫</button>
     </div>
-    <button class="btn btn-sm" id="pinOk" onclick="checkPin()" style="width:auto;margin:0 auto 8px;background:var(--orange);color:#fff">ตกลง</button><br>
-    <button class="btn btn-secondary btn-sm" onclick="cancelPinModal()" style="width:auto;margin:0 auto">ยกเลิก</button>
+    <button class="btn btn-secondary btn-sm" onclick="closePinModal()" style="width:auto;margin:0 auto">ยกเลิก</button>
   </div>
 </div>
 
@@ -879,7 +876,9 @@ textarea{min-height:72px;resize:vertical}
 // SQL เพิ่ม: ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS approved_at timestamptz;
 
 // ==================== PIN CONFIG ====================
-// 🔒 ไม่เก็บ PIN ในหน้าเว็บแล้ว — ทุก PIN ตรวจที่ server (Edge Function login) แล้วใช้ role/scope ที่ server ตอบกลับ
+const PIN_ADMIN = '9616';
+const PIN_OWNER = '0402';
+const PIN_ACCOUNTANT = '3750';
 
 // ==================== TELEGRAM CONFIG ====================
 // 🔒 Bot token ถูกย้ายไปเก็บฝั่ง server แล้ว (Supabase Edge Function: notify-telegram)
@@ -1289,57 +1288,38 @@ var currentRole = 'driver';
 var pinModalRole = 'admin';
 var pinBuffer = '';
 var pinTarget = null; // function to call after PIN success
-var pinOnCancel = null; // function to call when PIN modal is cancelled
-var pinBusy = false;    // กำลังรอ server ตอบ (กันกดซ้ำ)
-var pinSeq = 0;         // นับรอบหน้าต่าง PIN
-var pinInstalling = false; // กำลังติดตั้ง session (ห้ามยกเลิก)
-var PIN_MIN = 4, PIN_MAX = 6;
 
-function showPinModal(role, onSuccess, onCancel){
-  pinSeq++;   // หน้าต่างใหม่ = ผลของหน้าต่างเก่าที่ยังค้างจะถูกทิ้ง
+function showPinModal(role, onSuccess){
   pinBuffer = '';
   pinTarget = onSuccess;
-  pinOnCancel = onCancel || null;
   pinModalRole = role; // store expected role
   updatePinDots();
   document.getElementById('pinError').textContent = '';
-  if(role === 'login'){
-    document.getElementById('pinIcon').textContent = '🔒';
-    document.getElementById('pinTitle').textContent = 'เข้าใช้งาน';
-    document.getElementById('pinDesc').textContent = 'ใส่ PIN 4–6 หลัก แล้วกด ตกลง (ใส่ครั้งเดียว เครื่องนี้จำไว้ให้)';
-  } else if(role === 'admin'){
+  if(role === 'admin'){
     document.getElementById('pinIcon').textContent = '🔑';
     document.getElementById('pinTitle').textContent = 'แอดมิน PIN';
-    document.getElementById('pinDesc').textContent = 'ใส่ PIN 4–6 หลักสำหรับแอดมิน หรือ PIN เจ้าของ แล้วกด ตกลง';
+    document.getElementById('pinDesc').textContent = 'ใส่ PIN 4 หลักสำหรับแอดมิน หรือ PIN เจ้าของ';
   } else {
     document.getElementById('pinIcon').textContent = '👑';
     document.getElementById('pinTitle').textContent = 'เจ้าของ PIN';
-    document.getElementById('pinDesc').textContent = 'ใส่ PIN 4–6 หลักสำหรับเจ้าของ แล้วกด ตกลง';
+    document.getElementById('pinDesc').textContent = 'ใส่ PIN 4 หลักสำหรับเจ้าของ';
   }
   document.getElementById('pinModal').classList.add('show');
 }
 
 function closePinModal(){
-  pinSeq++;   // คำตอบจาก server ที่มาช้าหลังปิด/ยกเลิกหน้าต่าง จะไม่ถูกนำไปใช้
   document.getElementById('pinModal').classList.remove('show');
-  pinBuffer = ''; pinTarget = null; pinOnCancel = null;
+  pinBuffer = ''; pinTarget = null;
   updatePinDots();
-}
-
-function cancelPinModal(){
-  if(pinInstalling) return;   // กำลังติดตั้ง session อยู่ ยกเลิกไม่ได้ (รอแป๊บเดียว)
-  var cb = pinOnCancel;
-  closePinModal();
-  if(cb) cb();
 }
 
 function pinKey(n){
-  if(pinBusy || pinBuffer.length >= PIN_MAX) return;
+  if(pinBuffer.length >= 4) return;
   pinBuffer += n;
   updatePinDots();
   document.getElementById('pinError').textContent = '';
-  // ครบ 6 หลักส่งตรวจเลย · 4–5 หลักต้องกด ตกลง เอง
-  if(pinBuffer.length === PIN_MAX){
+  // Auto-check at 4 digits
+  if(pinBuffer.length === 4){
     setTimeout(checkPin, 150);
   }
 }
@@ -1356,86 +1336,36 @@ function pinClear(){
 }
 
 function updatePinDots(){
-  for(var i=0;i<PIN_MAX;i++){
+  for(var i=0;i<4;i++){
     var dot = document.getElementById('pd'+i);
     if(dot) dot.style.background = i < pinBuffer.length ? 'var(--orange)' : 'var(--border2)';
   }
 }
 
-// ตรวจ PIN ที่ server เท่านั้น: role/scope จาก Edge Function login เป็นตัวตัดสินว่าเปิดโหมดไหน
-// owner → โหมดเจ้าของ (ใช้ session เจ้าของ) · scope stock → โหมดบัญชี · scope delivery_admin (PIN แอดมินจัดส่ง, ชื่อเดิม admin) → โหมดแอดมิน · อื่น ๆ → พนักงาน
-function modeFromLogin(j){
-  if(j && j.role === 'owner') return 'owner';
-  if(j && j.scope === 'stock') return 'accountant';
-  if(j && (j.scope === 'delivery_admin' || j.scope === 'admin')) return 'admin';
-  return 'driver';
+function checkPin(){
+  if(pinBuffer === PIN_OWNER){
+    currentRole = 'owner';
+    closePinModal();
+    toast('ok','👑 เข้าสู่ระบบเจ้าของแล้ว');
+    if(pinTarget) pinTarget('owner');
+  } else if(pinBuffer === PIN_ADMIN){
+    currentRole = 'admin';
+    closePinModal();
+    toast('ok','🔑 เข้าสู่ระบบแอดมินแล้ว');
+    if(pinTarget) pinTarget('admin');
+  } else if(pinBuffer === PIN_ACCOUNTANT){
+    currentRole = 'accountant';
+    closePinModal();
+    toast('ok','🧾 เข้าสู่ระบบบัญชีแล้ว');
+    if(pinTarget) pinTarget('accountant');
+  } else if(pinBuffer.length >= 4){
+    document.getElementById('pinError').textContent = '❌ PIN ไม่ถูกต้อง';
+    pinBuffer = '';
+    updatePinDots();
+  }
 }
-async function checkPin(){
-  if(pinBusy) return;
-  var errEl = document.getElementById('pinError');
-  if(pinBuffer.length < PIN_MIN){ errEl.textContent = 'ใส่ PIN '+PIN_MIN+'–'+PIN_MAX+' หลัก แล้วกด ตกลง'; return; }
-  if(_storageBroken || !empDb){ errEl.textContent = _storageBroken ? STORAGE_FAIL_MSG : '📶 เชื่อมต่อระบบไม่ได้ — รีเฟรชหน้า'; pinBuffer = ''; updatePinDots(); return; }
-  var typed = pinBuffer;
-  pinBusy = true; errEl.textContent = '⏳ กำลังตรวจ...';
-  var seq = pinSeq;
-  var res = await loginPin(typed);
-  typed = '';
-  if(seq !== pinSeq){ pinBusy = false; return; }   // หน้าต่างถูกปิด/ยกเลิกไปแล้ว ทิ้งผลนี้
-  if(!res.ok){
-    pinBusy = false;
-    errEl.textContent = pinErrText(res);
-    pinBuffer = ''; updatePinDots();
-    return;
-  }
-  var mode = modeFromLogin(res.data);
-  var role = res.data && res.data.role;
-  var deny = '';
-  if(pinModalRole === 'owner' && role !== 'owner') deny = '❌ ต้องใช้ PIN เจ้าของ';
-  else if(pinModalRole === 'admin' && mode === 'driver') deny = '❌ PIN นี้ไม่มีสิทธิ์แอดมิน/เจ้าของ';
-  else if(pinModalRole === 'login' && role !== 'employee' && role !== 'owner') deny = '❌ ใช้ PIN พนักงาน';
-  if(deny){
-    pinBusy = false;
-    errEl.textContent = deny;
-    pinBuffer = ''; updatePinDots();
-    return;
-  }
-  pinInstalling = true;   // ระหว่างติดตั้ง session กดยกเลิกไม่ได้
-  var sErr = await applyLoginSession(res.data, mode, seq);
-  pinInstalling = false;
-  pinBusy = false;
-  if(seq !== pinSeq){ if(!sErr && mode === 'owner') await dropOwnerSession(); return; }
-  if(sErr){
-    errEl.textContent = '⚠️ เข้าระบบไม่สำเร็จ ('+sErr+') ลองใหม่';
-    pinBuffer = ''; updatePinDots();
-    return;
-  }
-  var cb = pinTarget;
-  // ระหว่างรอ อาจมีแท็บอื่นเปลี่ยนบัญชี (หน้านี้ถูกพักไว้) → ไม่ให้สิทธิ์ ต้องยืนยันใหม่
-  var stillOk = (mode === 'owner') ? (_ownerActive && !!ownerDb && db === ownerDb) : (!!empDb && db === empDb && !!_verifiedUid);
-  if(!stillOk || _storageBroken){
-    errEl.textContent = _storageBroken ? STORAGE_FAIL_MSG : '⚠️ บัญชีในเครื่องเปลี่ยนระหว่างตรวจ ลองใหม่';
-    pinBuffer = ''; updatePinDots();
-    return;
-  }
-  if(mode !== 'driver') currentRole = mode;
-  closePinModal();
-  if(mode === 'owner') toast('ok','👑 เข้าสู่ระบบเจ้าของแล้ว');
-  else if(mode === 'admin') toast('ok','🔑 เข้าสู่ระบบแอดมินแล้ว');
-  else if(mode === 'accountant') toast('ok','🧾 เข้าสู่ระบบบัญชีแล้ว');
-  if(cb) cb(mode === 'driver' ? 'login' : mode);
-}
-// คีย์บอร์ด: ตัวเลข / Backspace / Enter = ตกลง / Esc = ยกเลิก (ตอนหน้าต่าง PIN เปิดอยู่)
-document.addEventListener('keydown', function(e){
-  var m = document.getElementById('pinModal');
-  if(!m || !m.classList.contains('show')) return;
-  if(/^[0-9]$/.test(e.key)){ pinKey(e.key); e.preventDefault(); }
-  else if(e.key === 'Backspace'){ pinDelete(); e.preventDefault(); }
-  else if(e.key === 'Enter'){ checkPin(); e.preventDefault(); }
-  else if(e.key === 'Escape'){ cancelPinModal(); e.preventDefault(); }
-});
 
 const SUPABASE_URL = 'https://hfystbdqjhftrlelmkjm.supabase.co';
-var DELIV_AUTH_KEY = 'sb-kmmh-delivery-auth';   // r11: ช่องเก็บ session ของแอปส่งของเอง (ตั้งต้นสคริปต์ ก่อนสร้าง client ใด ๆ) — ทุกแอปร้านอยู่โดเมนเดียวกัน (kmmhtpl16-jpg.github.io) ห้ามแตะ key ของแอปอื่น
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmeXN0YmRxamhmdHJsZWxta2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNTc3MDUsImV4cCI6MjA5NDczMzcwNX0.cyRCwh0G6ArSevhsKa6kmPnYhLRRJYrxhlH0ED_JJaE';
 
 // ==================== STORE ====================
@@ -1468,14 +1398,10 @@ function sbDelete(table, id){ return db.from(table).delete().eq('id', id); }
 
 // Init Supabase
 function initSupabase(){
-  if(_storageBroken) return;
-  if(empDb) return;   // ใช้ client พนักงานตัวเดียวทั้งหน้า (ทิ้ง/สร้างใหม่เฉพาะตอนล้าง session) · db ตั้งหลังยืนยันเท่านั้น
   if(typeof supabase === 'undefined'){ console.warn('Supabase SDK not loaded'); return; }
   if(SUPABASE_URL === 'YOUR_SUPABASE_URL'){ console.warn('Supabase not configured'); return; }
   try{
-    var me = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth:{ storageKey: DELIV_AUTH_KEY } });
-    empDb = me;   // ยังไม่ตั้ง db — ต้องผ่าน verifyEmp() ก่อน
-    try{ me.auth.onAuthStateChange(function(ev, sess){ onEmpAuth(me, ev, sess); }); }catch(e){}
+    db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('Supabase connected ✓');
   }catch(e){ console.error('Supabase init error:', e); }
 }
@@ -1911,242 +1837,36 @@ function showPage(p){
 }
 
 // ==================== INIT ====================
-// เข้าระบบ: ถ้าเครื่องนี้มี session อยู่แล้วใช้ต่อเลย · ถ้ายังไม่มี ให้พนักงานใส่ PIN ครั้งเดียว (server ตรวจ แล้วเครื่องจำ session ไว้)
+// ล็อกอินเงียบอัตโนมัติ: พนักงานไม่ต้องพิมพ์รหัส — มี session ให้ RLS authenticated ทำงาน
 const LOGIN_URL = SUPABASE_URL + '/functions/v1/login';
-async function loginPin(pin){
+const DELIV_PIN = '2546';
+async function mintSession(pin){
   var sleep = function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
   for(var attempt=0; attempt<3; attempt++){
     var res;
     try{
       res = await fetch(LOGIN_URL,{ method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+SUPABASE_KEY }, body: JSON.stringify({ pin:pin }) });
-    }catch(e){ if(attempt<2){ await sleep(400); continue; } return { ok:false, error:'network' }; }
+    }catch(e){ if(attempt<2){ await sleep(400); continue; } return 'network'; }
+    if(res.status===401){ return 'invalid_pin'; }
     var j = await res.json().catch(function(){ return {}; });
-    if(res.status===401) return { ok:false, error:'invalid_pin', attempts_left:j.attempts_left };
-    if(res.status===429) return { ok:false, error:'too_many_attempts', retry_after_minutes:j.retry_after_minutes };
-    if(res.ok && j.access_token) return { ok:true, data:j };
-    if(res.status>=500 && attempt<2){ await sleep(400); continue; }
-    return { ok:false, error: j.error || ('error_'+res.status) };
-  }
-  return { ok:false, error:'error' };
-}
-function pinErrText(r){
-  if(r.error==='invalid_pin') return '❌ PIN ไม่ถูกต้อง'+(r.attempts_left!=null?' (ลองได้อีก '+r.attempts_left+' ครั้ง)':'');
-  if(r.error==='too_many_attempts') return '⛔ ใส่ผิดหลายครั้งเกินไป ลองใหม่ใน '+(r.retry_after_minutes||15)+' นาที';
-  if(r.error==='network') return '📶 เชื่อมต่อไม่ได้ เช็คเน็ตแล้วลองใหม่';
-  return '⚠️ เข้าระบบไม่สำเร็จ ('+r.error+')';
-}
-// session เจ้าของอยู่ใน client แยก (ไม่บันทึกลงเครื่อง persistSession:false · storageKey ของแท็บนี้เอง) —
-// session พนักงานใน storage ที่ใช้ร่วมกันทุกแท็บไม่ถูกแตะเลย แท็บพนักงานอื่น (index/queue/live) จึงไม่มีทางได้ token เจ้าของ
-// ป้าย kmmh_owner_sess / kmmh_emp_sess เป็นของรุ่นก่อน (ไม่ได้ใช้แล้ว) — ถ้าเจอ ถือว่ามี session เจ้าของค้างใน storage → ล้าง
-var OWNER_SESS_FLAG = 'kmmh_owner_sess', EMP_SESS_KEY = 'kmmh_emp_sess';
-var empDb = null;     // client พนักงาน (บันทึกลงเครื่อง ใช้ร่วมทุกแท็บ)
-var ownerDb = null;   // client เจ้าของ (อยู่ในหน่วยความจำแท็บนี้เท่านั้น)
-var _ownerActive = false, _ownerUid = null;
-var _sessGen = 0;     // นับทุกครั้งที่ session เปลี่ยน (ติดตั้ง/ทิ้ง/ล้าง) ใช้ผูกผลเช็ค role กับ session ที่เช็คจริง
-async function curSession(c){
-  c = c || db;
-  try{ var s = await c.auth.getSession(); return (s && s.data && s.data.session) || null; }catch(e){ return null; }
-}
-function dropOwnerClient(){
-  var o = ownerDb;
-  ownerDb = null; _ownerActive = false; _ownerUid = null; _sessGen++;
-  if(db === o) db = (_verifiedUid && empDb) ? empDb : null;   // กลับไปใช้ client พนักงานเฉพาะเมื่อยืนยันแล้ว (ล้างทุกครั้งที่มี auth event)
-  if(o){
-    try{ if(o.auth.stopAutoRefresh) o.auth.stopAutoRefresh(); }catch(e){}
-    try{ o.auth.signOut({ scope:'local' }).catch(function(){}); }catch(e){}   // client ในหน่วยความจำ — ไม่มีอะไรใน storage
-  }
-}
-// ล็อกแบบเดียวกับรอบ 6: ทิ้ง client ทั้งหมด + ล้างค่าที่ยืนยันแล้ว ไม่สร้าง client ใหม่ ไม่ขอ PIN แสดงข้อความให้ปิดแท็บ
-function lockStorageFail(msg){
-  var old = empDb;
-  dropOwnerClient();
-  _storageBroken = true; _verifiedUid = null; db = null; empDb = null; _sessGen++;
-  if(typeof currentRole !== 'undefined') currentRole = 'driver';
-  try{ if(old && old.auth.stopAutoRefresh) old.auth.stopAutoRefresh(); }catch(e){}
-  try{ var pm = document.getElementById('pinModal'); if(pm) pm.classList.remove('show'); }catch(e){}
-  blockApp(msg || STORAGE_FAIL_MSG);
-}
-// เปลี่ยน session ทีละงานเท่านั้น (กันสลับ เจ้าของ/พนักงาน ซ้อนกัน)
-var _sessQ = Promise.resolve();
-function sessTx(fn){ var p = _sessQ.then(fn, fn); _sessQ = p.catch(function(){}); return p; }
-function clearOwnerMarks(){ try{ localStorage.removeItem(OWNER_SESS_FLAG); localStorage.removeItem(EMP_SESS_KEY); }catch(e){} }
-var _verifiedUid = null;   // user id พนักงานที่ยืนยันกับ public.users แล้วในการเปิดหน้านี้ (บน empDb)
-var _storageBroken = false; // ล้าง session ในเครื่องไม่สำเร็จ → ล็อกหน้า ไม่สร้าง client ใหม่
-var STORAGE_FAIL_MSG = 'ล้างข้อมูลในเครื่องไม่สำเร็จ กรุณาปิดแท็บแล้วเปิดใหม่';
-var TAB_SWITCH_MSG = 'บัญชีในเครื่องถูกเปลี่ยนจากแท็บอื่น กรุณาปิดแท็บแล้วเปิดใหม่';
-/* ล็อกทั้งหน้า (ใช้เมื่อล้าง session ในเครื่องไม่สำเร็จ — ไม่สร้าง client ใหม่ ไม่โหลด/ไม่ส่งข้อมูล) */
-function blockApp(msg){
-  try{
-    var b=document.getElementById('appBlock');
-    if(!b){ b=document.createElement('div'); b.id='appBlock'; b.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.8);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;font-size:18px;font-weight:700;line-height:1.5'; document.body.appendChild(b); }
-    b.textContent=msg;
-  }catch(e){}
-}
-/* เช็คว่า session ใน storage และป้ายรุ่นก่อนถูกลบจริง (อ่าน storage ไม่ได้ = ถือว่าไม่สะอาด) */
-function storageClean(){
-  try{ return !Object.keys(localStorage).some(function(k){ return k===DELIV_AUTH_KEY || k==='kmmh_owner_sess' || k==='kmmh_emp_sess'; }); }catch(e){ return false; }
-}
-// ===== กฎเดียวกันทั้ง 3 หน้า (index / queue / live) =====
-// ทุก auth event ของ client พนักงาน (ยกเว้นต่ออายุ token บัญชีเดิม) → เพิ่มรุ่น (_authGen) + พักการใช้ข้อมูล (db=null) + ทิ้งโหมดแอดมิน/เจ้าของ
-// กลับมาใช้ได้เฉพาะผ่าน verifyEmp() ที่ผูกกับ client + uid + รุ่น · ออกจากระบบ → พัก + ขอ PIN · uid อื่น → ล็อก
-var _authGen = 0, _lastAuthUid = null, _lastGoodUid = null, _selfAuth = 0;
-function suspendAuth(){
-  db = null; _verifiedUid = null;
-  dropOwnerClient();
-  if(typeof currentRole !== 'undefined' && currentRole !== 'driver') currentRole = 'driver';
-  try{ var pa = document.getElementById('page-admin'); if(pa && pa.classList.contains('active')) showPage('report'); }catch(e){}
-}
-function onEmpAuth(me, ev, sess){
-  if(me !== empDb) return;
-  var uid = (sess && sess.user && sess.user.id) || null;
-  if(ev === 'INITIAL_SESSION') return;   // r12: INITIAL_SESSION = สถานะตอนเริ่ม client (ไม่ใช่การเปลี่ยน) — ผู้สร้าง client ยืนยันเองอยู่แล้ว · เดิมนับเป็นการเปลี่ยน → ensureSession ทิ้ง/สร้าง client วนไม่จบเมื่อยังไม่เข้าระบบ (เจอกับ supabase-js ตัวจริง)
-  if(ev === 'TOKEN_REFRESHED' && uid === _lastAuthUid) return;   // ต่ออายุ token บัญชีเดิม ไม่นับ
-  _lastAuthUid = uid;
-  _authGen++;
-  if(_selfAuth > 0) return;   // หน้านี้เปลี่ยนเอง (ติดตั้ง/ล้าง) — ผู้เรียกยืนยันต่อเองด้วย verifyEmp
-  suspendAuth();              // เปลี่ยนจากแท็บอื่น: หยุดใช้ข้อมูลทันที
-  if(uid && _lastGoodUid && uid !== _lastGoodUid){ lockStorageFail(TAB_SWITCH_MSG); return; }
-  setTimeout(function(){ if(!_storageBroken) ensureSession(); }, 0);   // ออกจากระบบ → ขอ PIN · บัญชีเดิม → ยืนยันใหม่
-}
-// ยืนยันแล้วค่อยใช้: จับรุ่น + uid ก่อนเช็ค role แล้วอ่าน session ซ้ำ ต้องเป็น client เดิม ไม่ล็อก รุ่นเดิม uid เดิม จึงตั้ง db
-async function verifyEmp(c){
-  var gen = _authGen;
-  var s = await curSession(c);
-  if(!s || !s.user || !s.user.id) return { v:'none' };
-  var uid = s.user.id;
-  var who = await sessionRole(c);
-  if(_storageBroken || c !== empDb) return { v:'stale' };
-  if(who.role !== 'employee' || who.uid !== uid) return { v:'notemp', err:who.err };
-  var s2 = await curSession(c);
-  if(_storageBroken || c !== empDb) return { v:'stale' };
-  if(gen !== _authGen || !s2 || !s2.user || s2.user.id !== uid) return { v:'changed' };
-  _verifiedUid = uid; _lastGoodUid = uid;
-  if(!_ownerActive) db = c;
-  return { v:'ok' };
-}
-// พนักงานยืนยันแล้ว: ใช้ client พนักงานอยู่ ไม่อยู่ในโหมดเจ้าของ และ uid ปัจจุบัน = uid ที่ยืนยันไว้
-async function sessionVerified(){
-  if(_storageBroken || !empDb || db !== empDb || _ownerActive || !_verifiedUid) return false;
-  var s = await curSession(empDb);
-  return !!(s && s.user && s.user.id === _verifiedUid);
-}
-async function wipeLocalSession(){
-  dropOwnerClient();
-  var c = empDb, so;
-  if(c){
-    _selfAuth++;
-    try{ so = await c.auth.signOut({ scope:'local' }); }catch(e){ so = { error:e }; }
-    _selfAuth--;
-    if(so && so.error) console.warn('signOut ไม่สำเร็จ — ทิ้ง client แล้วสร้างใหม่', so.error);
-    try{ if(c.auth.stopAutoRefresh) c.auth.stopAutoRefresh(); }catch(e){}
-  }
-  try{ Object.keys(localStorage).forEach(function(k){ if(k===DELIV_AUTH_KEY) localStorage.removeItem(k); }); }catch(e){}
-  clearOwnerMarks();
-  _verifiedUid = null; _sessGen++;
-  db = null; empDb = null;   // ทิ้ง client เดิม (ล้าง session ในหน่วยความจำ)
-  if(!storageClean()){   // ลบไม่ออก/ลบแล้วยังเหลือ → ไม่สร้าง client ใหม่ (กันหยิบ session เก่ากลับมาใช้) ล็อกหน้าแทน
-    lockStorageFail();
-    return;
-  }
-  initSupabase();   // สร้างใหม่จาก storage ที่ล้างแล้วจริง
-}
-// role จาก public.users ของตัวเอง (ไม่เชื่อค่าในเครื่อง) ผูกกับ uid ที่เช็คจริง · err = เช็คไม่ได้ (เช่น เน็ตหลุด)
-async function sessionRole(c){
-  c = c || db;
-  try{
-    if(!c) return { role:null };
-    var s = await curSession(c);
-    if(!s || !s.user || !s.user.id) return { role:null };
-    var uid = s.user.id;
-    var r = await c.from('users').select('role,is_active').eq('id', uid).maybeSingle();
-    if(r && r.error) return { role:null, err:r.error, uid:uid };
-    if(!r || !r.data || r.data.is_active === false) return { role:null, uid:uid };
-    return { role:String(r.data.role||''), uid:uid };
-  }catch(e){ return { role:null, err:e }; }
-}
-// รุ่นก่อนเคยเก็บ session เจ้าของไว้ใน storage พร้อมป้าย — ถ้าเจอป้าย (หรืออ่าน storage ไม่ได้) ไม่ใช้ต่อ
-async function legacyOwnerCleanup(){
-  var m;
-  try{ m = localStorage.getItem(OWNER_SESS_FLAG) === '1' || localStorage.getItem(EMP_SESS_KEY) !== null; }catch(e){ lockStorageFail(); return; }
-  if(m) await wipeLocalSession();
-}
-function _dropOwner(){ dropOwnerClient(); }
-function dropOwnerSession(){ return sessTx(async function(){ _dropOwner(); }); }
-// ติดตั้ง session ที่ server ส่งกลับมาเสมอ (ไม่ใช้ session เก่าที่ไม่เกี่ยวข้อง)
-// เจ้าของ → client แยกในหน่วยความจำ · พนักงาน → client พนักงาน (storage) แล้วยืนยันกับ public.users ก่อนใช้
-function applyLoginSession(j, mode, seq){
-  return sessTx(async function(){
-    if(seq !== pinSeq) return 'cancelled';
-    if(_storageBroken) return 'storage_error';
-    var who, sNow, r;
-    if(mode === 'owner'){
-      var ag = _authGen, oc;
-      try{ oc = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth:{ persistSession:false, autoRefreshToken:true, detectSessionInUrl:false, storageKey:'kmmh-owner-'+Math.random().toString(36).slice(2) } }); }catch(e){ return 'session_error'; }
-      try{ r = await oc.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token }); }catch(e){ r = { error:e }; }
-      if(!r || r.error){ try{ oc.auth.stopAutoRefresh && oc.auth.stopAutoRefresh(); }catch(e){} return 'session_error'; }
-      who = await sessionRole(oc); sNow = await curSession(oc);
-      if(who.role !== 'owner' || !sNow || !sNow.user || who.uid !== sNow.user.id){
-        try{ oc.auth.stopAutoRefresh && oc.auth.stopAutoRefresh(); oc.auth.signOut({ scope:'local' }).catch(function(){}); }catch(e){}
-        return 'role_mismatch';
-      }
-      if(seq !== pinSeq || _storageBroken || ag !== _authGen){ try{ oc.auth.stopAutoRefresh && oc.auth.stopAutoRefresh(); }catch(e){} return 'cancelled'; }
-      dropOwnerClient();
-      ownerDb = oc; _ownerUid = sNow.user.id; _ownerActive = true; db = ownerDb; _sessGen++;
-      return null;
+    if(res.ok && j.access_token){
+      var r = await db.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token });
+      if(!r.error) return null;
+      if(attempt<2){ await sleep(400); continue; }
+      return 'session_error';
     }
-    dropOwnerClient();   // PIN อื่นที่ไม่ใช่เจ้าของ = ออกจากโหมดเจ้าของ
-    clearOwnerMarks();
-    initSupabase();
-    if(!empDb) return 'session_error';
-    _verifiedUid = null; db = null; _sessGen++;   // ระหว่างติดตั้ง ยังไม่ถือว่ายืนยัน ห้ามใช้ข้อมูล
-    var ce = empDb;
-    _selfAuth++;
-    try{ r = await ce.auth.setSession({ access_token:j.access_token, refresh_token:j.refresh_token }); }catch(e){ r = { error:e }; }
-    _selfAuth--;
-    var bad = (r && r.error) ? 'session_error' : '';
-    if(!bad){
-      var vr = await verifyEmp(ce);   // ผูกกับ client + uid + รุ่น
-      if(vr.v === 'changed'){ lockStorageFail(TAB_SWITCH_MSG); return 'changed'; }
-      if(vr.v === 'stale') return 'cancelled';
-      if(vr.v !== 'ok') bad = 'role_mismatch';
-      else _sessGen++;
-    }
-    if(bad){ await wipeLocalSession(); return bad; }
-    return null;
-  });
+    if(attempt<2){ await sleep(400); continue; }
+    return j.error || ('error_'+res.status);
+  }
+  return 'error';
 }
-var _loginWait = null;
-function askLoginPin(){
-  if(_loginWait) return _loginWait;
-  _loginWait = new Promise(function(resolve){
-    showPinModal('login', function(){ resolve(true); }, function(){ resolve(false); });
-  }).then(function(ok){ _loginWait = null; return ok; });
-  return _loginWait;
-}
-// รับเฉพาะ session ที่ยืนยันกับ public.users แล้วในการเปิดหน้านี้ (พนักงานบน empDb หรือเจ้าของบน ownerDb ของแท็บนี้)
 async function ensureSession(){
   initSupabase();
-  if(!empDb) return false;
-  if(_ownerActive && ownerDb && db === ownerDb){
-    var so = await curSession(ownerDb);
-    if(so && so.user && so.user.id === _ownerUid) return true;
-    await sessTx(async function(){ dropOwnerClient(); });
-  }
-  var c = empDb;
-  if(db === c && _verifiedUid){   // ยืนยันแล้วในหน้านี้ และยังไม่มี auth event ใด ๆ หลังจากนั้น (event ล้าง _verifiedUid)
-    var s0 = await curSession(c);
-    if(s0 && s0.user && s0.user.id === _verifiedUid && db === c && c === empDb && !_storageBroken) return true;
-  }
-  db = null; _verifiedUid = null;   // ระหว่างเช็ค ห้ามใช้ข้อมูล
-  var r = await verifyEmp(c);
-  if(r.v === 'ok') return true;
-  if(r.v === 'stale') return false;
-  if(r.v === 'changed'){ lockStorageFail(TAB_SWITCH_MSG); return false; }
-  if(r.v === 'notemp'){
-    await sessTx(wipeLocalSession);   // ไม่ใช่พนักงาน/เช็คไม่ได้ → ล้างทั้ง storage และ client
-    if(!empDb) return false;          // ล้างไม่สำเร็จ → หน้าถูกล็อกแล้ว ไม่ขอ PIN
-  }
-  return await askLoginPin();   // ใส่ PIN → applyLoginSession ยืนยันด้วย verifyEmp แบบเดียวกัน
+  if(!db) return false;
+  try{ var s = await db.auth.getSession(); if(s && s.data && s.data.session) return true; }catch(e){}
+  var err = await mintSession(DELIV_PIN);
+  if(err) console.warn('auto-login:', err);
+  return !err;
 }
 async function startApp(){
   renderStaff();                 // 🆕 วาดปุ่มคนขับ/ผู้ช่วยจากสำเนาในเครื่องก่อน
@@ -2174,19 +1894,7 @@ async function startApp(){
   }
 }
 (async function(){
-  initSupabase();
-  if(empDb) await sessTx(legacyOwnerCleanup);   // session เจ้าของไม่เคยอยู่ใน storage แล้ว — ล้างของรุ่นก่อนถ้าเจอ
-  // ensureSession ยืนยัน role กับ public.users (ไม่ใช่พนักงาน/เช็คไม่ได้ → ล้างแล้วขอ PIN)
-  var ok = await ensureSession();
-  while(!ok){   // ล็อกหน้าไว้: ยังไม่เข้าระบบ = ไม่โหลด/ไม่ส่งข้อมูลใด ๆ (กดยกเลิก = ถาม PIN ใหม่)
-    if(_storageBroken){ blockApp(STORAGE_FAIL_MSG); return; }
-    if(!empDb){
-      showPinModal('login');
-      document.getElementById('pinError').textContent = '📶 เชื่อมต่อระบบไม่ได้ — เช็คเน็ตแล้วรีเฟรชหน้า';
-      return;
-    }
-    ok = await ensureSession();
-  }
+  await ensureSession();
   await startApp();
 })();
 
@@ -3594,32 +3302,12 @@ async function approveAll(){
   else toast('ok','✓ อนุมัติ '+okN+' บิลแล้ว');
 }
 
-async function adminSwitchRole(){
+function adminSwitchRole(){
   if(currentRole==='owner'){
-    // Owner → drop to admin (คืน session พนักงาน ไม่ให้ session เจ้าของค้าง)
-    // ทิ้งเจ้าของ + เช็คพนักงาน + ตั้ง role ทำในคิวเดียวกับการติดตั้ง session ทั้งก้อน
-    // ผูกผลเช็คกับ uid และรุ่นของ session (_sessGen) แล้วเช็คซ้ำทุกอย่างก่อนวาดหน้าแอดมิน
-    var res = await sessTx(async function(){
-      dropOwnerClient();
-      try{ localStorage.getItem(OWNER_SESS_FLAG); }catch(e){ lockStorageFail(); return 'locked'; }   // อ่าน storage ไม่ได้ = ล้างข้อมูลไม่สำเร็จ (รอบ 7) → ล็อก
-      if(_storageBroken || !empDb) return 'locked';
-      var gen = _sessGen, ag = _authGen;
-      var s1 = await curSession(empDb);
-      if(!s1 || !s1.user || s1.user.id !== _verifiedUid) return 'unverified';
-      var uid = s1.user.id;
-      var who = await sessionRole(empDb), s2 = await curSession(empDb);
-      if(who.role !== 'employee' || who.uid !== uid || !s2 || !s2.user || s2.user.id !== uid) return 'unverified';
-      if(gen !== _sessGen || ag !== _authGen || _ownerActive || ownerDb || _storageBroken || _verifiedUid !== uid) return 'unverified';
-      db = empDb;
-      currentRole = 'admin';
-      toast('ok','เปลี่ยนเป็น 🔑 แอดมิน');
-      renderAdmin();
-      return 'ok';
-    });
-    if(res === 'ok') return;
-    currentRole = 'driver';
-    if(res === 'locked' || _storageBroken || !empDb) return;
-    showPinModal('admin', function(role){ renderAdmin(); });
+    // Owner → drop to admin
+    currentRole='admin';
+    toast('ok','เปลี่ยนเป็น 🔑 แอดมิน');
+    renderAdmin();
   } else if(currentRole==='admin'){
     // Admin → try owner PIN
     showPinModal('owner', function(role){
