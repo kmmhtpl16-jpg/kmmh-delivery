@@ -114,7 +114,9 @@ textarea{min-height:72px;resize:vertical}
 .hist-item.special{border-left:3px solid var(--amber)}
 .hi-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
 .hi-bill{font-size:14px;font-weight:700;font-family:'IBM Plex Mono',monospace}
-.hi-date{font-size:12px;color:var(--t3);font-family:'IBM Plex Mono',monospace}
+.hi-date{font-size:12px;color:var(--t3);font-family:'IBM Plex Mono',monospace;text-align:right}
+.hi-time{font-size:11.5px;color:var(--t2);margin-top:2px;white-space:nowrap}
+.hi-time b{color:var(--green,#16a34a);font-weight:700}
 .hi-mid{font-size:13px;color:var(--t2);margin-bottom:6px}
 .hi-bottom{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .badge{display:inline-flex;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
@@ -779,7 +781,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.26</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.27</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -3942,6 +3944,14 @@ function setHQ(v,focus){
   if(el && focus) try{ el.focus(); }catch(e){}    /* กดปุ่ม ✕ ล้างคำค้น = เคอร์เซอร์ยังอยู่ในช่อง พิมพ์ใหม่ได้เลย */
   histShown=HIST_PAGE; renderHistory();
 }
+/* 🕘 เวลาออก · ปิดงาน ใต้วันที่บนการ์ดประวัติ (v1.27 · 27 ต.ค.69 คุณหลิงขอ)
+   ปิดงาน = timeArrival (เวลาที่กดส่งรูปหลังส่งของ) · โชว์เฉพาะงานที่ปิดแล้ว */
+function histTimes(r){
+  var hm=function(t){ var m=/^([01]?\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/.exec(String(t||'').trim()); return m?(('0'+m[1]).slice(-2)+':'+m[2]):''; };
+  var o=hm(r.timeOut), c=r.step2Done?hm(r.timeArrival):'';
+  if(!o&&!c) return '';
+  return '<div class="hi-time">'+(o?'ออก '+o:'')+(o&&c?' · ':'')+(c?'<b>ปิดงาน '+c+'</b>':'')+'</div>';
+}
 function renderHistory(){
   var months = [...new Set(records.map(function(r){return r.date.slice(0,7);}))].sort().reverse();
   var moN = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
@@ -3982,7 +3992,7 @@ function renderHistory(){
     var done=r.step2Done;
     html+='<div class="hist-item '+((delivTypeOf(r)!=='klang'&&(r.brickOn||r.crane||r.labor))?'special':'')+'" onclick="showDetail('+r.id+')">'
       +'<div class="hi-top"><div style="display:flex;align-items:center;gap:6px"><div class="hi-bill">'+r.bill+'</div>'+(r.status==='pending'?'<span style="font-size:11px;font-weight:700;color:var(--red);background:var(--red-bg);padding:2px 7px;border-radius:10px">รออนุมัติ</span>':'')
-      +(r.lastEditedAt?'<span style="font-size:11px;font-weight:600;color:var(--amber);background:var(--amber-bg);padding:2px 7px;border-radius:10px;margin-left:2px">✏️ แก้ไขแล้ว</span>':'')+'</div><div class="hi-date">'+r.date+'</div></div>'
+      +(r.lastEditedAt?'<span style="font-size:11px;font-weight:600;color:var(--amber);background:var(--amber-bg);padding:2px 7px;border-radius:10px;margin-left:2px">✏️ แก้ไขแล้ว</span>':'')+'</div><div class="hi-date">'+r.date+histTimes(r)+'</div></div>'
       +'<div class="hi-mid">👤 '+team+(r.dest?' · 📍 '+r.dest:'')+'</div>'
       +'<div class="hi-bottom">'
       +'<span class="badge '+typeBadge+'">'+typeLabel+'</span> '
