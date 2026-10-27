@@ -781,7 +781,7 @@ textarea{min-height:72px;resize:vertical}
     <div>
       <div class="ph-title">🔒 แอดมิน<span> บิลที่ยกเลิก</span></div>
       <div class="ph-sub" id="adminRoleBadge">กรุณายืนยันตัวตน</div>
-      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.27</div>
+      <div class="ph-sub" style="opacity:.55;margin-top:2px">เวอร์ชัน v1.28</div>
     </div>
     <button onclick="adminSwitchRole()" style="background:var(--card2);border:0.5px solid var(--border2);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--t2);font-family:'Sarabun',sans-serif">🔑 เปลี่ยน</button>
   </div>
@@ -3946,11 +3946,22 @@ function setHQ(v,focus){
 }
 /* 🕘 เวลาออก · ปิดงาน ใต้วันที่บนการ์ดประวัติ (v1.27 · 27 ต.ค.69 คุณหลิงขอ)
    ปิดงาน = timeArrival (เวลาที่กดส่งรูปหลังส่งของ) · โชว์เฉพาะงานที่ปิดแล้ว */
+function histHM(t){ var m=/^([01]?\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/.exec(String(t||'').trim()); return m?(('0'+m[1]).slice(-2)+':'+m[2]):''; }
 function histTimes(r){
-  var hm=function(t){ var m=/^([01]?\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/.exec(String(t||'').trim()); return m?(('0'+m[1]).slice(-2)+':'+m[2]):''; };
+  var hm=histHM;
   var o=hm(r.timeOut), c=r.step2Done?hm(r.timeArrival):'';
   if(!o&&!c) return '';
   return '<div class="hi-time">'+(o?'ออก '+o:'')+(o&&c?' · ':'')+(c?'<b>ปิดงาน '+c+'</b>':'')+'</div>';
+}
+/* ↕️ ลำดับการ์ดประวัติ (v1.28 · 27 ต.ค.69 คุณหลิงขอ)
+   1) งานที่ยังไม่ปิด อยู่บนสุด (วันใหม่ก่อน · ออกทีหลังอยู่บน)
+   2) งานที่ปิดแล้ว: วันใหม่ก่อน · ในวันเดียวกัน ปิดทีหลังอยู่บน */
+function histOrder(a,b){
+  var oa=a.step2Done?1:0, ob=b.step2Done?1:0;
+  if(oa!==ob) return oa-ob;
+  var d=String(b.date||'').localeCompare(String(a.date||'')); if(d) return d;
+  var ta=oa?histHM(a.timeArrival):histHM(a.timeOut), tb=ob?histHM(b.timeArrival):histHM(b.timeOut);
+  return tb.localeCompare(ta)||((Number(b.id)||0)-(Number(a.id)||0));
 }
 function renderHistory(){
   var months = [...new Set(records.map(function(r){return r.date.slice(0,7);}))].sort().reverse();
@@ -3966,7 +3977,7 @@ function renderHistory(){
     if(r.status==='cancelled') return false;
     if(_q) return histMatch(r,_q);            /* กำลังค้นหา = ค้นทุกเดือน ไม่ติดเดือนที่เลือกไว้ */
     return !histFilter||r.date.startsWith(histFilter);
-  }).sort(function(a,b){return b.date.localeCompare(a.date)||b.id-a.id;});
+  }).sort(histOrder);
   var _sc=document.getElementById('histSearchClear'); if(_sc) _sc.style.display=_q?'block':'none';
   // Count pending for badge
   var pendingApprove = f.filter(function(r){return r.status==='pending';}).length;
