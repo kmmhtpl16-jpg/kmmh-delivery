@@ -69,6 +69,11 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
       background:#64748b;border:2.5px solid #fff;box-shadow:0 0 0 1px #64748b;transform:translate(-50%,50%)}
 .pdot.on{background:#0f766e;box-shadow:0 0 0 1px #0f766e}
 .pdot.alert{background:#ef4444;box-shadow:0 0 0 1px #ef4444;animation:pls 1.4s infinite}
+/* v1.5: เครื่องว่างแต่จุดล่าสุดยังวิ่งอยู่ = หมุดจาง (ยังไม่ได้รับจุดจอด) */
+.pin.stale{opacity:.62;border-style:dashed}
+.pin .ps{font-size:11.5px;color:#b45309;font-weight:700;margin-top:2px}
+.pdot.stale{opacity:.5}
+.dcard .row.stale{color:#b45309;font-weight:700}
 @keyframes pls{0%{box-shadow:0 0 0 1px #ef4444}50%{box-shadow:0 0 0 7px rgba(239,68,68,.28)}100%{box-shadow:0 0 0 1px #ef4444}}
 .foot{flex:0 0 auto;background:#fff;border-top:1px solid #e2e8f0;padding:10px max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
       display:flex;gap:8px;align-items:center;font-size:12.5px;color:#64748b;flex-wrap:wrap}
@@ -98,7 +103,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
   .foot{font-size:14px}
   .pin{padding:5px 11px;border-radius:12px}
   .pin .pn{font-size:15px}
-  .pin .pm,.pin .pb{font-size:13px}
+  .pin .pm,.pin .pb,.pin .ps{font-size:13px}
   .pdot{width:16px;height:16px}
 }
 </style>
@@ -107,7 +112,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Sarabun",
 <div class="app">
   <div class="top">
     <a class="back" href="index.html">← กลับแอป</a>
-    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.4</span>
+    <span class="ttl">🚚 Car Tracking</span><span class="ver">v1.5</span>
     <span class="spacer"></span>
     <span class="stat" id="stat">กำลังเชื่อมต่อ…</span>
     <button class="btn" id="btnFit">🎯 ดูทุกคัน</button>
@@ -139,6 +144,9 @@ var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var db=null;
 var POLL_MS=20000;      // ดึงข้อมูลทุก 20 วินาที (เฉพาะตอนมีคนดู)
 var ALERT_MIN=15;       // เงียบเกินกี่นาที ถึงขึ้นธงแดง (นับเฉพาะตอนมีบิลเปิดค้าง)
+var STALE_KMH=5;        // v1.5: ต่ำกว่านี้ = GPS แกว่งตอนจอด ไม่นับว่าวิ่ง (ข้อมูลจริง 14 วัน: รถจอดนิ่งส่วนใหญ่อ่านได้ไม่ถึง 5 กม./ชม.)
+var STALE_MIN=5;        // v1.5: เงียบถึงกี่นาทีจึงถือว่าไม่ใช่รถที่กำลังวิ่งอยู่ (ตอนวิ่งจริง 98% ส่งจุดถัดไปภายใน 5 นาที)
+var STALE_TXT='จุดล่าสุดตอนวิ่ง (ยังไม่ได้รับจุดจอด)';
 
 // ==== PURE HELPERS START ====
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -212,6 +220,15 @@ function stateChip(st){
   if(st.level==='alert')  return {cls:'alert',txt:'🔴 มีบิลค้าง · เงียบ '+st.mins+' นาที'};
   if(st.level==='onjob')  return {cls:'on',txt:'🚚 กำลังส่งของ'};
   return {cls:'',txt:'จอด/ว่าง'};
+}
+// v1.5: เครื่องว่าง (ไม่มีบิลค้าง) แต่จุดล่าสุดยังมีความเร็ว และเงียบไปแล้ว = ตำแหน่งนี้ไม่ใช่ที่จอดจริง
+// ใช้กับสถานะ idle เท่านั้น — ไม่แตะกติกาธงแดง (deviceState) · ไม่รู้ความเร็ว = ไม่เตือน
+function staleMoving(pos,st){
+  if(!pos||!st||st.level!=='idle') return false;
+  if(pos.speed_kmh==null||pos.speed_kmh==='') return false;
+  var v=Number(pos.speed_kmh);
+  if(isNaN(v)||v<STALE_KMH) return false;
+  return st.mins!=null && st.mins>=STALE_MIN;
 }
 function cardCls(st){
   if(st.level==='nodata') return 'none';
@@ -475,10 +492,12 @@ function setStat(txt,cls){
 }
 function pinHtml(name,pos,bill,st){
   var meta=fmtTime(pos.recorded_at)+' · 🔋'+fmtBatt(pos.batt)+' · '+fmtSpeed(pos.speed_kmh);
-  var cls=(st.level==='alert')?'alert':(st.level==='onjob'?'on':'');
+  var stale=staleMoving(pos,st);
+  var cls=(st.level==='alert')?'alert':(st.level==='onjob'?'on':(stale?'stale':''));
   var h='<div class="pin '+cls+'"><div class="pn">'+esc(name)+'</div><div class="pm">'+esc(meta)+'</div>';
   if(bill) h+='<div class="pb">'+esc(billLine(bill))+'</div>';
   if(st.level==='alert') h+='<div class="pb">⚠️ เงียบ '+st.mins+' นาที</div>';
+  if(stale) h+='<div class="ps">'+esc(STALE_TXT)+'</div>';
   h+='</div><div class="pdot '+cls+'"></div>';
   return h;
 }
@@ -570,6 +589,7 @@ function renderList(now){
     if(p){
       html+='<div class="row">🕘 อัปเดตล่าสุด <b>'+fmtTime(p.recorded_at)+'</b> <span style="color:#94a3b8">('+fmtAgo(st.mins)+')</span></div>';
       html+='<div class="row">🔋 <span class="'+battCls(p.batt)+'">'+fmtBatt(p.batt)+'</span> · ความเร็ว '+fmtSpeed(p.speed_kmh)+'</div>';
+      if(staleMoving(p,st)) html+='<div class="row stale">⚠️ '+esc(STALE_TXT)+'</div>';
       if(bill) html+='<div class="bill">'+esc(billLine(bill))+(destName(bill.dest)?'<br>📍 '+esc(destName(bill.dest)):'')+'</div>';
       html+='<div class="acts">'+
             '<button class="sbtn'+(follow===d.device_id?' act':'')+'" data-go="'+esc(d.device_id)+'">📍 ดูบนแผนที่</button>'+
